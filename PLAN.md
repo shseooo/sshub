@@ -762,7 +762,7 @@
 
 +- [x] 계획서 작성
 
-+- [ ] Tauri v2.3 + React 19.2 + Vite 6 프로젝트 초기화
++- [ ] Tauri v2.3 + React 19.2 + Vite 7 프로젝트 초기화
 
 +- [ ] Tailwind CSS + shadcn/ui 설정
 
