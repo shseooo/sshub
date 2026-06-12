@@ -9,14 +9,14 @@ export interface Server {
   authType: AuthType;
   keyId: number | null;
   pemData: string | null;
-  passwordHash: string | null;
-  passwordSaved: boolean;
-  groupName: string;
-  tags: string[];
+  groupName: string | null;
+  /** JSON-encoded string array */
+  tags: string | null;
   isFavorite: boolean;
-  notes: string;
-  createdAt: string;
-  updatedAt: string;
+  notes: string | null;
+  lastConnectedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
 }
 
 export interface CreateServerDto {
@@ -27,9 +27,9 @@ export interface CreateServerDto {
   authType: AuthType;
   keyId?: number;
   pemData?: string;
-  password?: string;
   groupName?: string;
-  tags?: string[];
+  /** JSON-encoded string array */
+  tags?: string;
   notes?: string;
 }
 

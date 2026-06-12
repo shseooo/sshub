@@ -1,26 +1,58 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getServerById, createServer, updateServer } from '@/lib/tauriCommands'
-import type { Server } from '@/types/server'
+import { z } from 'zod'
+import { useSaveServer, useServer } from '@/hooks/useServers'
+import { useSshKeys } from '@/hooks/useKeys'
+import { useT } from '@/contexts/LanguageContext'
+import type { AuthType, CreateServerDto } from '@/types/server'
+
+// Messages are i18n keys; translated when shown.
+const serverSchema = z.object({
+  name: z.string().trim().min(1, 'edit.errName'),
+  host: z.string().trim().min(1, 'edit.errHost'),
+  port: z.number().int('edit.errPortInt').min(1, 'edit.errPortMin').max(65535, 'edit.errPortMax'),
+  username: z.string().trim().min(1, 'edit.errUser'),
+})
+
+/** DB의 tags(JSON 문자열 배열)를 쉼표 구분 문자열로 */
+function tagsToInput(tags: string | null): string {
+  if (!tags) return ''
+  try {
+    const parsed = JSON.parse(tags)
+    return Array.isArray(parsed) ? parsed.join(', ') : tags
+  } catch {
+    return tags
+  }
+}
+
+function inputToTags(input: string): string | undefined {
+  const items = input.split(',').map((t) => t.trim()).filter(Boolean)
+  return items.length > 0 ? JSON.stringify(items) : undefined
+}
+
+const fieldClass = 'w-full px-3 py-2 bg-background border border-border focus:outline-hidden focus:border-phosphor/60 focus:ring-1 focus:ring-phosphor/40'
 
 export default function ServerEdit() {
   const { id } = useParams<{ id?: string }>()
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
+  const { t } = useT()
   const isEdit = !!id
 
-  const { data: server, isLoading } = useQuery({
-    queryKey: ['server', id],
-    queryFn: () => id ? getServerById(Number(id)) : null,
-    enabled: isEdit,
-  })
+  const { data: server, isLoading } = useServer(id ? Number(id) : undefined)
+  const { data: keys = [] } = useSshKeys()
+  const saveServer = useSaveServer()
 
   const [name, setName] = useState('')
   const [host, setHost] = useState('')
   const [port, setPort] = useState(22)
   const [username, setUsername] = useState('')
-  const [authType, setAuthType] = useState<'key' | 'password'>('key')
+  const [authType, setAuthType] = useState<AuthType>('key')
+  const [keyId, setKeyId] = useState<number | ''>('')
+  const [pemData, setPemData] = useState('')
+  const [groupName, setGroupName] = useState('')
+  const [tags, setTags] = useState('')
+  const [notes, setNotes] = useState('')
+  const [formError, setFormError] = useState<string | null>(null)
 
   useEffect(() => {
     if (server) {
@@ -28,115 +60,155 @@ export default function ServerEdit() {
       setHost(server.host)
       setPort(server.port)
       setUsername(server.username)
-      setAuthType(server.authType as 'key' | 'password')
+      setAuthType(server.authType)
+      setKeyId(server.keyId ?? '')
+      setPemData(server.pemData ?? '')
+      setGroupName(server.groupName ?? '')
+      setTags(tagsToInput(server.tags))
+      setNotes(server.notes ?? '')
     }
   }, [server])
 
-  const mutation = useMutation({
-    mutationFn: async (data: Partial<Server>) => {
-      if (isEdit && id) {
-        return updateServer({ ...data, id: Number(id) })
-      }
-      return createServer(data)
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['servers'] })
-      navigate('/servers')
-    },
-  })
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    mutation.mutate({
-      name,
-      host,
-      port,
-      username,
+    setFormError(null)
+
+    const parsed = serverSchema.safeParse({ name, host, port, username })
+    if (!parsed.success) {
+      setFormError(t(parsed.error.issues[0].message))
+      return
+    }
+
+    const dto: CreateServerDto = {
+      ...parsed.data,
       authType,
+      keyId: authType === 'key' && keyId !== '' ? keyId : undefined,
+      pemData: authType === 'pem' && pemData.trim() ? pemData.trim() : undefined,
+      groupName: groupName.trim() || undefined,
+      tags: inputToTags(tags),
+      notes: notes.trim() || undefined,
+    }
+
+    saveServer.mutate(isEdit && id ? { ...dto, id: Number(id) } : dto, {
+      onSuccess: () => navigate('/servers'),
+      onError: (error) => setFormError(String(error)),
     })
   }
 
   if (isEdit && isLoading) {
-    return <div className="p-6">로딩 중...</div>
+    return <div className="p-6">{t('common.loading')}</div>
   }
 
   return (
     <div className="p-6 max-w-2xl">
-      <h1 className="text-2xl font-bold mb-6">
-        {isEdit ? '서버 수정' : '서버 추가'}
-      </h1>
+      <div className="mb-6 crt-in">
+        <p className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground mb-1">
+          {isEdit ? `~/servers/${id}/edit` : '~/servers/new'}
+        </p>
+        <h1 className="font-display text-5xl leading-none text-foreground">
+          {isEdit ? 'EDIT SERVER' : 'NEW SERVER'}
+          <span className="text-phosphor animate-blink">▮</span>
+        </h1>
+      </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium mb-1">이름</label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-background border border-border"
-            required
-          />
+      <form onSubmit={handleSubmit} className="space-y-4 bg-card border border-border p-5 crt-in" style={{ animationDelay: '50ms' }}>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">{t('edit.name')} *</label>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={fieldClass} required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">{t('edit.group')}</label>
+            <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)} className={fieldClass} placeholder={t('edit.groupPlaceholder')} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4">
+          <div className="col-span-2">
+            <label className="block text-sm font-medium mb-1">{t('edit.host')} *</label>
+            <input type="text" value={host} onChange={(e) => setHost(e.target.value)} className={fieldClass} placeholder={t('edit.hostPlaceholder')} required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">{t('edit.port')}</label>
+            <input type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} className={fieldClass} min={1} max={65535} />
+          </div>
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1">호스트</label>
-          <input
-            type="text"
-            value={host}
-            onChange={(e) => setHost(e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-background border border-border"
-            required
-          />
+          <label className="block text-sm font-medium mb-1">{t('edit.user')} *</label>
+          <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className={fieldClass} placeholder={t('edit.userPlaceholder')} required />
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1">포트</label>
-          <input
-            type="number"
-            value={port}
-            onChange={(e) => setPort(Number(e.target.value))}
-            className="w-full px-3 py-2 rounded-md bg-background border border-border"
-            min={1}
-            max={65535}
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium mb-1">사용자</label>
-          <input
-            type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-background border border-border"
-            required
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium mb-1">인증 방식</label>
-          <select
-            value={authType}
-            onChange={(e) => setAuthType(e.target.value as 'key' | 'password')}
-            className="w-full px-3 py-2 rounded-md bg-background border border-border"
-          >
-            <option value="key">SSH 키</option>
-            <option value="password">비밀번호</option>
+          <label className="block text-sm font-medium mb-1">{t('edit.authType')}</label>
+          <select value={authType} onChange={(e) => setAuthType(e.target.value as AuthType)} className={fieldClass}>
+            <option value="key">{t('edit.authKey')}</option>
+            <option value="password">{t('edit.authPassword')}</option>
+            <option value="pem">{t('edit.authPem')}</option>
           </select>
         </div>
+
+        {authType === 'key' && (
+          <div>
+            <label className="block text-sm font-medium mb-1">{t('edit.keySelect')}</label>
+            <select
+              value={keyId}
+              onChange={(e) => setKeyId(e.target.value === '' ? '' : Number(e.target.value))}
+              className={fieldClass}
+            >
+              <option value="">{t('edit.keyDefault')}</option>
+              {keys.map((key) => (
+                <option key={key.id} value={key.id}>
+                  {key.name} ({key.keyType})
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground mt-1">{t('edit.keyHint')}</p>
+          </div>
+        )}
+
+        {authType === 'password' && (
+          <p className="text-xs text-muted-foreground">{t('edit.passwordHint')}</p>
+        )}
+
+        {authType === 'pem' && (
+          <div>
+            <label className="block text-sm font-medium mb-1">{t('edit.pemLabel')}</label>
+            <textarea
+              value={pemData}
+              onChange={(e) => setPemData(e.target.value)}
+              className={`${fieldClass} font-mono h-32 resize-none`}
+              placeholder={'-----BEGIN RSA PRIVATE KEY-----\n...'}
+            />
+          </div>
+        )}
+
+        <div>
+          <label className="block text-sm font-medium mb-1">{t('edit.tags')}</label>
+          <input type="text" value={tags} onChange={(e) => setTags(e.target.value)} className={fieldClass} placeholder={t('edit.tagsPlaceholder')} />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">{t('edit.notes')}</label>
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className={`${fieldClass} h-20 resize-none`} />
+        </div>
+
+        {formError && <p className="text-sm text-destructive">{formError}</p>}
 
         <div className="flex gap-3 pt-4">
           <button
             type="submit"
-            className="px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
+            disabled={saveServer.isPending}
+            className="px-5 py-2 bg-primary text-primary-foreground hover:bg-phosphor transition-colors font-medium disabled:opacity-50"
           >
-            저장
+            {saveServer.isPending ? t('common.saving') : t('common.save')}
           </button>
           <button
             type="button"
             onClick={() => navigate('/servers')}
-            className="px-4 py-2 rounded-md bg-secondary text-secondary-foreground hover:bg-secondary/80"
+            className="px-5 py-2 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground transition-colors"
           >
-            취소
+            {t('common.cancel')}
           </button>
         </div>
       </form>

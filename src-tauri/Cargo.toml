@@ -19,26 +19,8 @@ tauri-plugin-notification = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
-tauri-plugin-sql = { version = "2", features = ["sqlite"] }
-tauri-plugin-store = "2"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
-chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1", features = ["v4", "serde"] }
-rpassword = "7"
-sha2 = "0.10"
-base64 = "0.22"
-thiserror = "1"
-tokio = { version = "1", features = ["full"] }
-futures = "0.3"
-ssh2 = "0.9"
-glob = "0.3"
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-native-tls"] }
-
-[target."cfg(target_os = \"macos\")".dependencies]
-security-framework = "2"
-
-[target."cfg(windows)".dependencies]
-winapi = { version = "0.3", features = ["wincred"] }
+portable-pty = "0.9"
+chrono = "0.4"

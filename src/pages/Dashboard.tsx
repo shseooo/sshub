@@ -1,104 +1,161 @@
-import { Server, Star, Plus, Terminal } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
-import { getServers } from '@/lib/tauriCommands'
+import { Star, Plus, Terminal, Pencil } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { useServers } from '@/hooks/useServers'
+import { useT } from '@/contexts/LanguageContext'
 import type { Server as ServerType } from '@/types/server'
 
-function ServerCard({ server }: { server: ServerType }) {
+function ServerCard({ server, index }: { server: ServerType; index: number }) {
+  const { t } = useT()
   return (
-    <div className="bg-card border border-border rounded-lg p-4 hover:border-primary/50 transition-colors">
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <Server className="h-4 w-4 text-muted-foreground" />
-          <h3 className="font-medium">{server.name}</h3>
+    <div
+      className="bracket group bg-card border border-border hover:border-phosphor/50 transition-colors p-4 crt-in"
+      style={{ animationDelay: `${index * 45}ms` }}
+    >
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className={server.lastConnectedAt ? 'led shrink-0' : 'led-off shrink-0'} />
+          <h3 className="font-semibold truncate">{server.name}</h3>
         </div>
-        {server.isFavorite && <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />}
+        {server.isFavorite && (
+          <Star className="h-3.5 w-3.5 text-phosphor fill-[var(--phosphor)] shrink-0" />
+        )}
       </div>
-      <div className="text-sm text-muted-foreground space-y-1">
-        <p>{server.host}:{server.port}</p>
-        <p>{server.username}@{server.host}</p>
-      </div>
-      <div className="flex gap-2 mt-3">
+
+      <p className="text-xs text-muted-foreground mb-1 truncate">
+        <span className="text-phosphor/70">$</span> ssh {server.username}@{server.host}
+        {server.port !== 22 && ` -p ${server.port}`}
+      </p>
+      <p className="text-[10px] text-muted-foreground/70 uppercase tracking-wider">
+        {server.groupName ? `group/${server.groupName}` : 'ungrouped'}
+        {server.lastConnectedAt &&
+          ` · last ${new Date(server.lastConnectedAt).toLocaleDateString()}`}
+      </p>
+
+      <div className="flex gap-2 mt-4">
         <Link
           to={`/terminal?serverId=${server.id}`}
-          className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-phosphor/40 text-phosphor hover:bg-primary hover:text-primary-foreground hover:border-transparent transition-colors"
         >
           <Terminal className="h-3 w-3" />
-          연결
+          {t('common.connect')}
         </Link>
         <Link
           to={`/servers/${server.id}/edit`}
-          className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground text-sm hover:bg-secondary/80"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground transition-colors"
         >
-          편집
+          <Pencil className="h-3 w-3" />
+          {t('common.edit')}
         </Link>
       </div>
     </div>
   )
 }
 
-export default function Dashboard() {
-  const { data: servers = [], isLoading } = useQuery({
-    queryKey: ['servers'],
-    queryFn: getServers,
-  })
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex-1 bg-card border border-border px-4 py-3">
+      <p className="font-display text-3xl leading-none text-phosphor glow-text tabular-nums">
+        {String(value).padStart(2, '0')}
+      </p>
+      <p className="mt-1 text-[9px] tracking-[0.25em] uppercase text-muted-foreground">{label}</p>
+    </div>
+  )
+}
 
-  const favoriteServers = servers.filter(s => s.isFavorite)
-  const recentServers = servers.slice(0, 6)
+export default function Dashboard() {
+  const { t } = useT()
+  const { data: servers = [], isLoading } = useServers()
+
+  const favoriteServers = servers.filter((s) => s.isFavorite)
+  const recentServers = servers
+    .filter((s) => s.lastConnectedAt)
+    .sort((a, b) => (b.lastConnectedAt! > a.lastConnectedAt! ? 1 : -1))
+    .slice(0, 6)
+  const allServers = servers.slice(0, 6)
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">대시보드</h1>
+    <div className="p-6 max-w-6xl">
+      {/* Header */}
+      <div className="flex items-end justify-between mb-6 crt-in">
+        <div>
+          <p className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground mb-1">
+            ~/dashboard
+          </p>
+          <h1 className="font-display text-5xl leading-none text-foreground">
+            DASHBOARD<span className="text-phosphor animate-blink">▮</span>
+          </h1>
+        </div>
         <Link
           to="/servers/new"
-          className="flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
+          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground hover:bg-phosphor transition-colors text-sm font-medium"
         >
           <Plus className="h-4 w-4" />
-          새 서버
+          {t('dashboard.newServer')}
         </Link>
       </div>
 
+      {/* Stats */}
+      <div className="flex gap-3 mb-8 crt-in" style={{ animationDelay: '60ms' }}>
+        <Stat label="Servers" value={servers.length} />
+        <Stat label="Favorites" value={favoriteServers.length} />
+        <Stat label="Recent" value={recentServers.length} />
+      </div>
+
       {isLoading ? (
-        <div className="flex items-center justify-center h-32 text-muted-foreground">
-          로딩 중...
+        <div className="flex items-center gap-2 h-32 text-muted-foreground text-sm">
+          <span className="animate-blink text-phosphor">▮</span> {t('common.loading')}
         </div>
       ) : (
         <>
           {favoriteServers.length > 0 && (
             <section className="mb-8">
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
-                즐겨찾기
+              <h2 className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground mb-3 flex items-center gap-2">
+                <Star className="h-3 w-3 text-phosphor" /> Favorites
+                <span className="flex-1 border-t border-border" />
               </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {favoriteServers.map(server => (
-                  <ServerCard key={server.id} server={server} />
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {favoriteServers.map((server, i) => (
+                  <ServerCard key={server.id} server={server} index={i} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {recentServers.length > 0 && (
+            <section className="mb-8">
+              <h2 className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground mb-3 flex items-center gap-2">
+                <Terminal className="h-3 w-3 text-phosphor" /> Recent Connections
+                <span className="flex-1 border-t border-border" />
+              </h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {recentServers.map((server, i) => (
+                  <ServerCard key={server.id} server={server} index={i} />
                 ))}
               </div>
             </section>
           )}
 
           <section>
-            <h2 className="text-lg font-semibold mb-4">서버 목록</h2>
+            <h2 className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground mb-3 flex items-center gap-2">
+              All Servers
+              <span className="flex-1 border-t border-border" />
+            </h2>
             {servers.length === 0 ? (
-              <div className="bg-card border border-border rounded-lg p-8 text-center">
-                <Server className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground mb-4">
-                  등록된 서버가 없습니다.
-                </p>
+              <div className="bg-card border border-border p-10 text-center crt-in">
+                <p className="font-display text-2xl text-muted-foreground mb-1">NO SERVERS REGISTERED</p>
+                <p className="text-xs text-muted-foreground mb-5">{t('dashboard.emptyHint')}</p>
                 <Link
                   to="/servers/new"
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground hover:bg-phosphor transition-colors text-sm font-medium"
                 >
                   <Plus className="h-4 w-4" />
-                  서버 추가하기
+                  {t('dashboard.addServerCta')}
                 </Link>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {recentServers.map(server => (
-                  <ServerCard key={server.id} server={server} />
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {allServers.map((server, i) => (
+                  <ServerCard key={server.id} server={server} index={i} />
                 ))}
               </div>
             )}

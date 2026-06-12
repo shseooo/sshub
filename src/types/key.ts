@@ -8,7 +8,9 @@ export interface SshKey {
   keyType: KeyType;
   keySize: number;
   passphraseProtected: boolean;
-  createdAt: string;
+  createdAt: string | null;
+  /** Whether the private key file exists on this machine (set by get_ssh_keys). */
+  hasPrivateFile?: boolean;
 }
 
 export interface CreateKeyDto {
@@ -21,7 +23,7 @@ export interface CreateKeyDto {
 export interface ImportKeyDto {
   name: string;
   publicKey: string;
-  privateKey: string;
+  privateKey?: string;
   pemData?: string;
   keyType: KeyType;
   passphrase?: string;

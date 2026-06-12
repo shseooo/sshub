@@ -1,82 +1,106 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { Server } from '@/types/server'
-import type { SshKey } from '@/types/key'
+import type { CreateServerDto, Server, UpdateServerDto } from '@/types/server'
+import type { CreateKeyDto, ImportKeyDto, SshKey } from '@/types/key'
 
 // ==================== Server Commands ====================
 
-export async function getServers(): Promise<Server[]> {
+export function getServers(): Promise<Server[]> {
   return invoke<Server[]>('get_servers')
 }
 
-export async function getServerById(id: number): Promise<Server | null> {
+export function getServerById(id: number): Promise<Server | null> {
   return invoke<Server | null>('get_server', { id })
 }
 
-export async function createServer(server: Partial<Server>): Promise<Server> {
+export function createServer(server: CreateServerDto): Promise<Server> {
   return invoke<Server>('create_server', { server })
 }
 
-export async function updateServer(server: Partial<Server>): Promise<Server> {
+export function updateServer(server: UpdateServerDto): Promise<Server> {
   return invoke<Server>('update_server', { server })
 }
 
-export async function deleteServer(id: number): Promise<void> {
+export function deleteServer(id: number): Promise<void> {
   return invoke<void>('delete_server', { id })
 }
 
-export async function toggleFavorite(id: number): Promise<Server> {
+export function toggleFavorite(id: number): Promise<Server> {
   return invoke<Server>('toggle_favorite', { id })
 }
 
 // ==================== SSH Config Commands ====================
 
-export async function syncServersToConfig(): Promise<void> {
+export function syncServersToConfig(): Promise<void> {
   return invoke<void>('sync_servers_to_config')
 }
 
-export async function syncConfigToServers(): Promise<Server[]> {
+export function syncConfigToServers(): Promise<Server[]> {
   return invoke<Server[]>('sync_config_to_servers')
 }
 
 // ==================== SSH Key Commands ====================
 
-export async function getSshKeys(): Promise<SshKey[]> {
+export function getSshKeys(): Promise<SshKey[]> {
   return invoke<SshKey[]>('get_ssh_keys')
 }
 
-export async function createSshKey(keyData: {
-  name: string
-  keyType: string
-  keySize?: number
-  passphrase?: string
-}): Promise<SshKey> {
+export function createSshKey(keyData: CreateKeyDto): Promise<SshKey> {
   return invoke<SshKey>('create_ssh_key', { keyData })
 }
 
-export async function importSshKey(keyData: {
-  name: string
-  publicKey: string
-  privateKey?: string
-  pemData?: string
-  keyType: string
-  passphrase?: string
-}): Promise<SshKey> {
+export function importSshKey(keyData: ImportKeyDto): Promise<SshKey> {
   return invoke<SshKey>('import_ssh_key', { keyData })
 }
 
-export async function deleteKey(id: number): Promise<void> {
+export function deleteKey(id: number): Promise<void> {
   return invoke<void>('delete_ssh_key', { id })
+}
+
+export interface LoadedKeyFile {
+  fileName: string
+  publicKey: string | null
+  privateKey: string | null
+}
+
+/** Reads a key file from disk; private keys also pull in the sibling .pub. */
+export function loadKeyFile(path: string): Promise<LoadedKeyFile> {
+  return invoke<LoadedKeyFile>('load_key_file', { path })
+}
+
+// ==================== Backup / Sync ====================
+
+export interface ImportSummary {
+  serversAdded: number
+  serversSkipped: number
+  keysAdded: number
+  keysSkipped: number
+}
+
+/** Writes the secret-free server/key list to a JSON file. */
+export function exportData(path: string): Promise<void> {
+  return invoke<void>('export_data', { path })
+}
+
+/** Merges an export file into the store; existing names are skipped. */
+export function importData(path: string): Promise<ImportSummary> {
+  return invoke<ImportSummary>('import_data', { path })
 }
 
 // ==================== Terminal Commands ====================
 
-export async function startSshSession(
-  serverId: number,
-  password?: string
-): Promise<{ success: boolean; message: string; needsPassword: boolean }> {
-  return invoke('start_ssh_session', { serverId, password })
+/** Spawns ssh (or a local shell when serverId is null) in a PTY. */
+export function startTerminalSession(sessionId: string, serverId: number | null): Promise<void> {
+  return invoke<void>('start_terminal_session', { sessionId, serverId })
 }
 
-export async function closeTerminalSession(sessionId: string): Promise<void> {
-  return invoke<void>('close_ssh_session', { sessionId })
+export function writeTerminal(sessionId: string, data: string): Promise<void> {
+  return invoke<void>('write_terminal', { sessionId, data })
+}
+
+export function resizeTerminal(sessionId: string, cols: number, rows: number): Promise<void> {
+  return invoke<void>('resize_terminal', { sessionId, cols, rows })
+}
+
+export function closeTerminal(sessionId: string): Promise<void> {
+  return invoke<void>('close_terminal', { sessionId })
 }

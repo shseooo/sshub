@@ -1,60 +1,151 @@
-import { Home, Server, Key, Settings, Plus } from 'lucide-react'
+import { useState } from 'react'
+import {
+  Home,
+  Server,
+  Key,
+  Settings,
+  SquareTerminal,
+  Plus,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils'
+import { useT } from '@/contexts/LanguageContext'
 
 const navItems = [
-  { icon: Home, label: '대시보드', path: '/' },
-  { icon: Server, label: '서버 목록', path: '/servers' },
-  { icon: Key, label: 'SSH 키 관리', path: '/keys' },
-  { icon: Settings, label: '설정', path: '/settings' },
+  { icon: Home, key: 'nav.dashboard', path: '/' },
+  { icon: Server, key: 'nav.servers', path: '/servers' },
+  { icon: SquareTerminal, key: 'nav.terminal', path: '/terminal' },
+  { icon: Key, key: 'nav.keys', path: '/keys' },
+  { icon: Settings, key: 'nav.settings', path: '/settings' },
 ]
 
-interface SidebarProps {
-  onNewServer: () => void
-}
-
-export default function Sidebar({ onNewServer }: SidebarProps) {
+export default function Sidebar() {
   const location = useLocation()
+  const { t } = useT()
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem('sidebar-collapsed') === '1'
+  )
+
+  const toggle = () => {
+    setCollapsed((prev) => {
+      const next = !prev
+      localStorage.setItem('sidebar-collapsed', next ? '1' : '0')
+      return next
+    })
+  }
 
   return (
-    <aside className="w-64 bg-card border-r border-border flex flex-col h-full">
-      <div className="p-4 border-b border-border">
-        <div className="flex items-center gap-2">
-          <Server className="h-6 w-6 text-primary" />
-          <h1 className="text-lg font-bold">Connectunnel</h1>
-        </div>
+    <aside
+      className={cn(
+        'bg-card border-r border-border flex flex-col h-full transition-[width] duration-150',
+        collapsed ? 'w-14' : 'w-60'
+      )}
+    >
+      {/* Logo + collapse toggle */}
+      <div
+        className={cn(
+          'border-b border-border flex',
+          collapsed
+            ? 'flex-col items-center gap-2 py-3'
+            : 'items-start justify-between px-4 pt-5 pb-4'
+        )}
+      >
+        {collapsed ? (
+          <span className="font-display text-2xl leading-none text-phosphor glow-text select-none">
+            s<span className="animate-blink">_</span>
+          </span>
+        ) : (
+          <div>
+            <h1 className="font-display text-4xl leading-none text-phosphor glow-text select-none">
+              sshub<span className="animate-blink">_</span>
+            </h1>
+            <p className="mt-1.5 text-[9px] tracking-[0.32em] uppercase text-muted-foreground">
+              SSH Ops Console
+            </p>
+          </div>
+        )}
+        <button
+          onClick={toggle}
+          title={collapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+          aria-label={collapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+          className="p-1.5 text-muted-foreground hover:text-phosphor hover:bg-muted transition-colors"
+        >
+          {collapsed ? (
+            <PanelLeftOpen className="h-4 w-4" />
+          ) : (
+            <PanelLeftClose className="h-4 w-4" />
+          )}
+        </button>
       </div>
 
-      <nav className="flex-1 p-2 space-y-1">
-        {navItems.map((item) => {
+      {/* Nav */}
+      <nav className="flex-1 py-3">
+        {navItems.map((item, i) => {
           const Icon = item.icon
           const isActive = location.pathname === item.path
           return (
             <Link
               key={item.path}
               to={item.path}
+              title={collapsed ? t(item.key) : undefined}
               className={cn(
-                'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors',
+                'group flex items-center text-sm border-l-2 transition-colors',
+                collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-2.5',
                 isActive
-                  ? 'bg-accent text-accent-foreground'
-                  : 'hover:bg-muted text-muted-foreground hover:text-foreground'
+                  ? 'border-phosphor bg-accent text-accent-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted'
               )}
             >
-              <Icon className="h-4 w-4" />
-              {item.label}
+              {!collapsed && (
+                <span
+                  className={cn(
+                    'text-[10px] tabular-nums',
+                    isActive ? 'text-phosphor' : 'text-muted-foreground/60'
+                  )}
+                >
+                  0{i + 1}
+                </span>
+              )}
+              <Icon className={cn('h-4 w-4 shrink-0', isActive && 'text-phosphor')} />
+              {!collapsed && (
+                <>
+                  <span className="flex-1">{t(item.key)}</span>
+                  {isActive && <span className="text-phosphor text-xs">▸</span>}
+                </>
+              )}
             </Link>
           )
         })}
       </nav>
 
-      <div className="p-2 border-t border-border">
-        <button
-          onClick={onNewServer}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+      {/* Footer */}
+      <div className={cn('border-t border-border', collapsed ? 'p-2' : 'p-3 space-y-3')}>
+        <Link
+          to="/servers/new"
+          title={collapsed ? t('common.addServer') : undefined}
+          className={cn(
+            'flex items-center justify-center bg-primary text-primary-foreground hover:bg-phosphor transition-colors font-medium',
+            collapsed ? 'p-2' : 'w-full gap-2 px-3 py-2 text-sm'
+          )}
         >
-          <Plus className="h-4 w-4" />
-          서버 추가
-        </button>
+          <Plus className="h-4 w-4 shrink-0" />
+          {!collapsed && t('common.addServer')}
+        </Link>
+        <div
+          className={cn(
+            'flex items-center',
+            collapsed ? 'justify-center pt-2' : 'gap-2 px-1'
+          )}
+        >
+          <span className="led" />
+          {!collapsed && (
+            <span className="text-[9px] tracking-[0.25em] uppercase text-muted-foreground">
+              System Online
+            </span>
+          )}
+        </div>
       </div>
     </aside>
   )
