@@ -4,7 +4,7 @@ use crate::AppState;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
 
-fn keys_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub fn keys_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .data_dir()
@@ -17,7 +17,7 @@ fn keys_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// Restrict private key files to owner-only access (0600).
 /// ssh refuses to use a private key whose file is group/world-readable, and
 /// it keeps secret material from other local users.
-fn secure_private_file(path: &std::path::Path) -> Result<(), String> {
+pub fn secure_private_file(path: &std::path::Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

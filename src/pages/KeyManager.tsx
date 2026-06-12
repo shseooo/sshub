@@ -390,7 +390,7 @@ export default function KeyManager() {
             {t('keys.subtitle', { n: keys.length })}
           </p>
           <h1 className="font-display text-5xl leading-none text-foreground">
-            SSH KEYS<span className="text-phosphor animate-blink">▮</span>
+            SSH KEYS
           </h1>
         </div>
         <div className="flex gap-2">

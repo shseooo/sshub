@@ -4,35 +4,113 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { listen } from '@tauri-apps/api/event'
-import { X, Plus, SquareTerminal, Server, SplitSquareHorizontal, SplitSquareVertical } from 'lucide-react'
+import { X, Plus, SquareTerminal, Server, SplitSquareHorizontal, SplitSquareVertical, RotateCw, Radio } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
-import {
-  startTerminalSession,
-  writeTerminal,
-  resizeTerminal,
-  closeTerminal,
-} from '@/lib/tauriCommands'
+import { startTerminalSession, writeTerminal, resizeTerminal, closeTerminal } from '@/lib/tauriCommands'
 import { useServers } from '@/hooks/useServers'
-import { useTerminal } from '@/contexts/TerminalContext'
+import { useTerminal, leaves } from '@/contexts/TerminalContext'
 import { useT } from '@/contexts/LanguageContext'
-import type { TerminalPane, TerminalTab } from '@/types/terminal'
+import { useShortcuts } from '@/contexts/ShortcutsContext'
+import { comboFromEvent } from '@/lib/shortcuts'
+import type { PaneNode, TerminalLeaf, TerminalTab } from '@/types/terminal'
 
-// One xterm instance per pane. Stays mounted (hidden when its tab is inactive)
-// so PTY sessions and scrollback survive tab switches. Refits via ResizeObserver,
-// which covers pane resize, sidebar collapse, and window resize uniformly.
+const nodeKey = (n: PaneNode) => (n.type === 'leaf' ? n.sessionId : n.id)
+
+interface Rect {
+  sessionId: string
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+// Compute each leaf's normalized rectangle (0..1) from the split tree + sizes.
+function computeRects(node: PaneNode, x: number, y: number, w: number, h: number, out: Rect[]) {
+  if (node.type === 'leaf') {
+    out.push({ sessionId: node.sessionId, x, y, w, h })
+    return
+  }
+  let cursor = node.direction === 'row' ? x : y
+  node.children.forEach((c, i) => {
+    const frac = (node.sizes[i] ?? 100 / node.children.length) / 100
+    if (node.direction === 'row') {
+      const cw = w * frac
+      computeRects(c, cursor, y, cw, h, out)
+      cursor += cw
+    } else {
+      const ch = h * frac
+      computeRects(c, x, cursor, w, ch, out)
+      cursor += ch
+    }
+  })
+}
+
+// Nearest leaf in the given arrow direction from the focused leaf.
+function pickInDirection(root: PaneNode, focused: string | null, arrow: string): string | null {
+  const rects: Rect[] = []
+  computeRects(root, 0, 0, 1, 1, rects)
+  if (rects.length <= 1) return null
+  const cur = rects.find((r) => r.sessionId === focused) ?? rects[0]
+  const ccx = cur.x + cur.w / 2
+  const ccy = cur.y + cur.h / 2
+  const cand = rects
+    .filter((r) => r.sessionId !== cur.sessionId)
+    .map((r) => ({ id: r.sessionId, cx: r.x + r.w / 2, cy: r.y + r.h / 2 }))
+  const horiz = arrow === 'ArrowLeft' || arrow === 'ArrowRight'
+  const pool = cand.filter((c) =>
+    arrow === 'ArrowRight'
+      ? c.cx > ccx + 0.01
+      : arrow === 'ArrowLeft'
+        ? c.cx < ccx - 0.01
+        : arrow === 'ArrowDown'
+          ? c.cy > ccy + 0.01
+          : c.cy < ccy - 0.01
+  )
+  if (pool.length === 0) return null
+  pool.sort((a, b) => {
+    const da = horiz ? Math.abs(a.cx - ccx) + Math.abs(a.cy - ccy) * 1.5 : Math.abs(a.cy - ccy) + Math.abs(a.cx - ccx) * 1.5
+    const db = horiz ? Math.abs(b.cx - ccx) + Math.abs(b.cy - ccy) * 1.5 : Math.abs(b.cy - ccy) + Math.abs(b.cx - ccx) * 1.5
+    return da - db
+  })
+  return pool[0].id
+}
+
+interface NodeCtx {
+  tabId: string
+  visible: boolean
+  showHeader: boolean
+  focusedPane: string | null
+  onFocus: (sessionId: string) => void
+  onClose: (sessionId: string) => void
+  onReconnect: (sessionId: string) => void
+  onResize: (splitId: string, sizes: number[]) => void
+  /** Routes typed input — to this pane, or to all panes when broadcast is on. */
+  onInput: (sessionId: string, data: string) => void
+}
+
+// One xterm per leaf. Stays mounted (hidden when its tab is inactive) so PTY
+// sessions and scrollback survive tab switches. Refits via ResizeObserver.
 function TerminalView({
   pane,
   visible,
+  focused,
   onFocus,
+  onInput,
 }: {
-  pane: TerminalPane
+  pane: TerminalLeaf
   visible: boolean
+  focused: boolean
   onFocus: () => void
+  onInput: (data: string) => void
 }) {
   const { t } = useT()
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<XTerm | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  // Keep the latest input router so the once-registered onData handler isn't stale
+  // when broadcast mode toggles.
+  const onInputRef = useRef(onInput)
+  onInputRef.current = onInput
 
   const safeFit = useCallback(() => {
     const el = containerRef.current
@@ -65,7 +143,7 @@ function TerminalView({
     fitRef.current = fit
 
     const dataDisp = term.onData((data) => {
-      writeTerminal(pane.sessionId, data).catch(() => {})
+      onInputRef.current(data)
     })
     const resizeDisp = term.onResize(({ cols, rows }) => {
       resizeTerminal(pane.sessionId, cols, rows).catch(() => {})
@@ -75,15 +153,12 @@ function TerminalView({
     const disposables: Array<() => void> = []
 
     ;(async () => {
-      const unlistenOut = await listen<string>(`terminal-output-${pane.sessionId}`, (e) => {
-        term.write(e.payload)
-      })
+      const unlistenOut = await listen<string>(`terminal-output-${pane.sessionId}`, (e) => term.write(e.payload))
       const unlistenClosed = await listen(`terminal-closed-${pane.sessionId}`, () => {
         term.write(`\r\n\x1b[90m[${t('term.closedNotice')}]\x1b[0m\r\n`)
       })
       disposables.push(unlistenOut, unlistenClosed)
       if (cancelled) return
-
       try {
         await startTerminalSession(pane.sessionId, pane.serverId)
         await resizeTerminal(pane.sessionId, term.cols, term.rows)
@@ -113,27 +188,66 @@ function TerminalView({
     }
   }, [visible, safeFit])
 
+  // Move the real cursor when this pane becomes the focused one (e.g. via keyboard nav)
+  useEffect(() => {
+    if (focused && visible) termRef.current?.focus()
+  }, [focused, visible])
+
   return <div ref={containerRef} className="h-full w-full" onMouseDown={onFocus} />
 }
 
-// Renders the panes of one tab in a resizable split layout.
-function PaneLayout({
-  tab,
-  visible,
-  focusedPane,
-  onFocusPane,
-  onClosePane,
-}: {
-  tab: TerminalTab
-  visible: boolean
-  focusedPane: string | null
-  onFocusPane: (sessionId: string) => void
-  onClosePane: (sessionId: string) => void
-}) {
-  const { setSizes } = useTerminal()
+function LeafView({ leaf, ctx }: { leaf: TerminalLeaf; ctx: NodeCtx }) {
+  const { t } = useT()
+  return (
+    <div className="relative h-full w-full min-w-0 min-h-0 overflow-hidden flex flex-col">
+      {ctx.showHeader && (
+        <div
+          onMouseDown={() => ctx.onFocus(leaf.sessionId)}
+          className={`flex items-center gap-2 px-2 h-6 text-[10px] border-b shrink-0 ${
+            ctx.focusedPane === leaf.sessionId
+              ? 'bg-accent text-phosphor border-phosphor/40'
+              : 'bg-card text-muted-foreground border-border'
+          }`}
+        >
+          <span className="truncate flex-1">{leaf.label}</span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              ctx.onReconnect(leaf.sessionId)
+            }}
+            title={t('term.reconnect')}
+            className="p-0.5 hover:text-phosphor"
+          >
+            <RotateCw className="h-3 w-3" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              ctx.onClose(leaf.sessionId)
+            }}
+            title={t('common.close')}
+            className="p-0.5 hover:text-destructive"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+      <div className="flex-1 min-h-0">
+        <TerminalView
+          pane={leaf}
+          visible={ctx.visible}
+          focused={ctx.focusedPane === leaf.sessionId}
+          onFocus={() => ctx.onFocus(leaf.sessionId)}
+          onInput={(data) => ctx.onInput(leaf.sessionId, data)}
+        />
+      </div>
+    </div>
+  )
+}
+
+function SplitView({ split, ctx }: { split: Extract<PaneNode, { type: 'split' }>; ctx: NodeCtx }) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const isRow = tab.direction === 'row'
-  const multi = tab.panes.length > 1
+  const isRow = split.direction === 'row'
 
   const startDrag = (i: number, e: React.MouseEvent) => {
     e.preventDefault()
@@ -141,17 +255,15 @@ function PaneLayout({
     if (!container) return
     const total = isRow ? container.clientWidth : container.clientHeight
     const startPos = isRow ? e.clientX : e.clientY
-    const start = [...tab.sizes]
-
+    const start = [...split.sizes]
     const onMove = (ev: MouseEvent) => {
       const pos = isRow ? ev.clientX : ev.clientY
       let delta = ((pos - startPos) / total) * 100
-      // keep both adjacent panes at >= 10%
       delta = Math.max(-(start[i] - 10), Math.min(start[i + 1] - 10, delta))
       const sizes = [...start]
       sizes[i] = start[i] + delta
       sizes[i + 1] = start[i + 1] - delta
-      setSizes(tab.id, sizes)
+      ctx.onResize(split.id, sizes)
     }
     const onUp = () => {
       window.removeEventListener('mousemove', onMove)
@@ -162,48 +274,16 @@ function PaneLayout({
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="h-full w-full flex"
-      style={{ flexDirection: tab.direction }}
-    >
-      {tab.panes.map((pane, i) => (
-        <Fragment key={pane.sessionId}>
+    <div ref={containerRef} className="h-full w-full flex" style={{ flexDirection: split.direction }}>
+      {split.children.map((child, i) => (
+        <Fragment key={nodeKey(child)}>
           <div
-            className="relative min-w-0 min-h-0 overflow-hidden flex flex-col"
-            style={{ flexBasis: `${tab.sizes[i]}%`, flexGrow: 0, flexShrink: 0 }}
+            className="relative min-w-0 min-h-0 overflow-hidden"
+            style={{ flexBasis: `${split.sizes[i]}%`, flexGrow: 0, flexShrink: 0 }}
           >
-            {multi && (
-              <div
-                onMouseDown={() => onFocusPane(pane.sessionId)}
-                className={`flex items-center gap-2 px-2 h-6 text-[10px] border-b shrink-0 ${
-                  focusedPane === pane.sessionId
-                    ? 'bg-accent text-phosphor border-phosphor/40'
-                    : 'bg-card text-muted-foreground border-border'
-                }`}
-              >
-                <span className="truncate flex-1">{pane.label}</span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onClosePane(pane.sessionId)
-                  }}
-                  className="p-0.5 hover:text-destructive"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            )}
-            <div className="flex-1 min-h-0">
-              <TerminalView
-                pane={pane}
-                visible={visible}
-                onFocus={() => onFocusPane(pane.sessionId)}
-              />
-            </div>
+            <PaneNodeView node={child} ctx={ctx} />
           </div>
-
-          {i < tab.panes.length - 1 && (
+          {i < split.children.length - 1 && (
             <div
               onMouseDown={(e) => startDrag(i, e)}
               className={`shrink-0 bg-border hover:bg-phosphor/60 transition-colors ${
@@ -217,21 +297,42 @@ function PaneLayout({
   )
 }
 
-// Always mounted in App (outside Routes); only visible on /terminal.
+function PaneNodeView({ node, ctx }: { node: PaneNode; ctx: NodeCtx }) {
+  return node.type === 'leaf' ? <LeafView leaf={node} ctx={ctx} /> : <SplitView split={node} ctx={ctx} />
+}
+
 export default function TerminalHost() {
   const { t } = useT()
+  const { shortcuts } = useShortcuts()
   const location = useLocation()
   const visible = location.pathname === '/terminal'
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: servers = [] } = useServers()
-  const { tabs, activeTab, setActiveTab, openTab, closeTab, splitActive, closePane } = useTerminal()
+  const {
+    tabs,
+    activeTab,
+    setActiveTab,
+    openTab,
+    closeTab,
+    splitActive,
+    closePane,
+    reconnectTab,
+    reconnectPane,
+    setSplitSizes,
+  } = useTerminal()
   const autoConnectedRef = useRef<string | null>(null)
-  // null = closed; 'new' opens a tab, 'row'/'column' split the active tab
   const [pickerMode, setPickerMode] = useState<'new' | 'row' | 'column' | null>(null)
   const [focusedPane, setFocusedPane] = useState<string | null>(null)
+  const [activated, setActivated] = useState(false)
+  // Broadcast: when on, typing in one pane is sent to every pane of the active tab.
+  const [broadcast, setBroadcast] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  const current = tabs.find((t) => t.id === activeTab) ?? null
+  const current = tabs.find((tb) => tb.id === activeTab) ?? null
+
+  useEffect(() => {
+    if (visible) setActivated(true)
+  }, [visible])
 
   const connectToServer = useCallback(
     (serverId: number) => {
@@ -253,29 +354,62 @@ export default function TerminalHost() {
     setSearchParams({}, { replace: true })
   }, [visible, searchParams, servers, connectToServer, setSearchParams])
 
-  // Keyboard: Cmd/Ctrl+T new local tab, Cmd/Ctrl+W close focused pane.
+  // Keyboard shortcuts (only while the terminal page is visible)
   useEffect(() => {
     if (!visible) return
+    const focusMove = (arrow: string, e: KeyboardEvent) => {
+      if (!current) return
+      e.preventDefault()
+      const target = pickInDirection(current.root, focusedPane, arrow)
+      if (target) setFocusedPane(target)
+    }
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey
-      if (!mod) return
-      const key = e.key.toLowerCase()
-      if (key === 't') {
+      // Tab switch: Cmd/Ctrl + 1..9 (fixed — a 1..9 family, not rebindable)
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && /^Digit[1-9]$/.test(e.code)) {
+        const idx = Number(e.code.slice(5)) - 1
+        if (tabs[idx]) {
+          e.preventDefault()
+          setActiveTab(tabs[idx].id)
+        }
+        return
+      }
+      const combo = comboFromEvent(e)
+      if (combo === shortcuts.newTab) {
         e.preventDefault()
         openTab(null, t('term.local'))
-      } else if (key === 'w') {
+      } else if (combo === shortcuts.closePane) {
         if (!current) return
         e.preventDefault()
+        const ls = leaves(current.root)
         const target =
-          focusedPane && current.panes.some((p) => p.sessionId === focusedPane)
+          focusedPane && ls.some((l) => l.sessionId === focusedPane)
             ? focusedPane
-            : current.panes[current.panes.length - 1]?.sessionId
+            : ls[ls.length - 1]?.sessionId
         if (target) closePane(current.id, target)
+      } else if (combo === shortcuts.splitRight) {
+        if (!current) return
+        e.preventDefault()
+        splitActive('row', null, t('term.local'), focusedPane)
+      } else if (combo === shortcuts.splitDown) {
+        if (!current) return
+        e.preventDefault()
+        splitActive('column', null, t('term.local'), focusedPane)
+      } else if (combo === shortcuts.broadcast) {
+        e.preventDefault()
+        setBroadcast((b) => !b)
+      } else if (combo === shortcuts.focusLeft) {
+        focusMove('ArrowLeft', e)
+      } else if (combo === shortcuts.focusRight) {
+        focusMove('ArrowRight', e)
+      } else if (combo === shortcuts.focusUp) {
+        focusMove('ArrowUp', e)
+      } else if (combo === shortcuts.focusDown) {
+        focusMove('ArrowDown', e)
       }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [visible, current, focusedPane, openTab, closePane])
+  }, [visible, current, focusedPane, tabs, shortcuts, openTab, closePane, splitActive, setActiveTab, t])
 
   // Close the picker on outside click
   useEffect(() => {
@@ -292,14 +426,14 @@ export default function TerminalHost() {
     const s = servers.find((x) => x.id === serverId)
     return s ? `${s.name} - ${s.username}@${s.host}` : t('nav.servers')
   }
-  // Apply the picker choice: new tab, or split the active tab along an axis.
   const pick = (serverId: number | null) => {
     const label = labelFor(serverId)
-    if (pickerMode === 'row' || pickerMode === 'column') splitActive(pickerMode, serverId, label)
+    if (pickerMode === 'row' || pickerMode === 'column') splitActive(pickerMode, serverId, label, focusedPane)
     else openTab(serverId, label)
     setPickerMode(null)
   }
-  const tabTitle = (tab: TerminalTab) => tab.panes[0]?.label ?? t('nav.terminal')
+  const tabTitle = (tab: TerminalTab) => leaves(tab.root)[0]?.label ?? t('nav.terminal')
+  const paneCount = (tab: TerminalTab) => leaves(tab.root).length
 
   return (
     <div className={visible ? 'flex flex-col h-full bg-background' : 'hidden'}>
@@ -318,18 +452,28 @@ export default function TerminalHost() {
             >
               <span className={activeTab === tab.id ? 'led shrink-0' : 'led-off shrink-0'} />
               <span className="truncate">{tabTitle(tab)}</span>
-              {tab.panes.length > 1 && (
-                <span className="text-[9px] text-muted-foreground/70 shrink-0">
-                  ⊞{tab.panes.length}
-                </span>
+              {paneCount(tab) > 1 && (
+                <span className="text-[9px] text-muted-foreground/70 shrink-0">⊞{paneCount(tab)}</span>
               )}
               <span
                 role="button"
+                title={t('term.reconnect')}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  reconnectTab(tab.id)
+                }}
+                className="ml-auto p-0.5 hover:bg-secondary hover:text-phosphor shrink-0"
+              >
+                <RotateCw className="h-3 w-3" />
+              </span>
+              <span
+                role="button"
+                title={t('common.close')}
                 onClick={(e) => {
                   e.stopPropagation()
                   closeTab(tab.id)
                 }}
-                className="ml-auto p-0.5 hover:bg-secondary hover:text-destructive shrink-0"
+                className="p-0.5 hover:bg-secondary hover:text-destructive shrink-0"
               >
                 <X className="h-3 w-3" />
               </span>
@@ -347,6 +491,17 @@ export default function TerminalHost() {
 
         {/* Split + new-connection controls (share one picker) */}
         <div className="relative flex items-center shrink-0" ref={menuRef}>
+          {current && paneCount(current) > 1 && (
+            <button
+              onClick={() => setBroadcast((b) => !b)}
+              title={`${t('term.broadcast')} (⌘⇧I)`}
+              className={`p-2 border-l border-border transition-colors ${
+                broadcast ? 'text-phosphor bg-accent' : 'text-muted-foreground hover:text-phosphor hover:bg-muted'
+              }`}
+            >
+              <Radio className="h-4 w-4" />
+            </button>
+          )}
           {current && (
             <div className="flex items-center border-l border-border">
               <button
@@ -400,11 +555,9 @@ export default function TerminalHost() {
                 <SquareTerminal className="h-3.5 w-3.5 text-phosphor shrink-0" />
                 {t('term.local')}
               </button>
-
               <div className="px-3 py-1 text-[9px] tracking-[0.25em] uppercase text-muted-foreground/70 border-t border-border">
                 Servers
               </div>
-
               {servers.length === 0 ? (
                 <p className="px-3 py-2 text-xs text-muted-foreground/70">{t('term.noServers')}</p>
               ) : (
@@ -429,34 +582,49 @@ export default function TerminalHost() {
         </div>
       </div>
 
-      {/* Terminal area — every tab stays mounted; inactive ones are hidden */}
-      <div className="flex-1 overflow-hidden relative">
+      {/* Terminal area — every tab stays mounted; inactive ones are hidden.
+          A phosphor top border signals broadcast (all-pane input) is armed. */}
+      <div
+        className={`flex-1 overflow-hidden relative ${
+          broadcast ? 'border-t-2 border-phosphor' : ''
+        }`}
+      >
         {tabs.length === 0 && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center crt-in">
               <pre className="font-display text-phosphor/80 glow-text text-2xl leading-tight mb-4 select-none">{`┌─[ sshub ]─┐
 │  > ssh _  │
 └───────────┘`}</pre>
-              <p className="text-xs text-muted-foreground max-w-md mx-auto px-4">
-                {t('term.emptyHint')}
-              </p>
+              <p className="text-xs text-muted-foreground max-w-md mx-auto px-4">{t('term.emptyHint')}</p>
             </div>
           </div>
         )}
-        {tabs.map((tab) => (
-          <div
-            key={tab.id}
-            className={tab.id === activeTab ? 'absolute inset-0' : 'hidden'}
-          >
-            <PaneLayout
-              tab={tab}
-              visible={tab.id === activeTab}
-              focusedPane={focusedPane}
-              onFocusPane={setFocusedPane}
-              onClosePane={(sid) => closePane(tab.id, sid)}
-            />
-          </div>
-        ))}
+        {activated &&
+          tabs.map((tab) => {
+            const showHeader = leaves(tab.root).length > 1
+            const ctx: NodeCtx = {
+              tabId: tab.id,
+              visible: tab.id === activeTab,
+              showHeader,
+              focusedPane,
+              onFocus: setFocusedPane,
+              onClose: (sid) => closePane(tab.id, sid),
+              onReconnect: (sid) => reconnectPane(tab.id, sid),
+              onResize: (splitId, sizes) => setSplitSizes(tab.id, splitId, sizes),
+              onInput: (sid, data) => {
+                if (broadcast && tab.id === activeTab) {
+                  leaves(tab.root).forEach((l) => writeTerminal(l.sessionId, data).catch(() => {}))
+                } else {
+                  writeTerminal(sid, data).catch(() => {})
+                }
+              },
+            }
+            return (
+              <div key={tab.id} className={tab.id === activeTab ? 'absolute inset-0' : 'hidden'}>
+                <PaneNodeView node={tab.root} ctx={ctx} />
+              </div>
+            )
+          })}
       </div>
     </div>
   )

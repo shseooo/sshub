@@ -1,19 +1,19 @@
-# Connectunnel (sshub)
+# sshub
 
 `~/.ssh/config`와 연동되는 크로스플랫폼 SSH 관리 데스크톱 앱.
 서버 목록 관리, SSH 키 생성/가져오기, 인앱 PTY 터미널(다중 탭)을 제공합니다.
 
 ## 기술 스택
 
-| 계층 | 기술 |
-|------|------|
-| 데스크톱 | Tauri v2 |
-| 백엔드 | Rust (JSON 파일 저장소, portable-pty) |
-| 프론트엔드 | React 19 + TypeScript 5.9 |
-| 빌드 | Vite 8, bun |
-| UI | Tailwind CSS v4 (CSS-first, `tailwind.config.js` 없음) |
-| 터미널 | @xterm/xterm 6 + Rust PTY |
-| 상태 관리 | TanStack Query v5 |
+| 계층       | 기술                                                   |
+| ---------- | ------------------------------------------------------ |
+| 데스크톱   | Tauri v2                                               |
+| 백엔드     | Rust (JSON 파일 저장소, portable-pty)                  |
+| 프론트엔드 | React 19 + TypeScript 5.9                              |
+| 빌드       | Vite 8, bun                                            |
+| UI         | Tailwind CSS v4 (CSS-first, `tailwind.config.js` 없음) |
+| 터미널     | @xterm/xterm 6 + Rust PTY                              |
+| 상태 관리  | TanStack Query v5                                      |
 
 ## 사전 요구사항
 

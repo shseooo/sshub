@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "sshub",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.shseooo.sshub",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -14,7 +14,11 @@
       {
         "title": "sshub",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "visible": false,
+        "backgroundColor": "#0a0d0b",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {

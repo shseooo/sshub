@@ -1,15 +1,26 @@
-export interface TerminalPane {
+/** A single terminal session pane (tree leaf). */
+export interface TerminalLeaf {
+  type: 'leaf'
   /** PTY session id — also the event channel suffix */
-  sessionId: string;
-  serverId: number | null;
-  label: string;
+  sessionId: string
+  serverId: number | null
+  label: string
 }
 
+/** A split container holding child panes side by side ('row') or stacked ('column'). */
+export interface TerminalSplit {
+  type: 'split'
+  id: string
+  direction: 'row' | 'column'
+  children: PaneNode[]
+  /** Per-child size as a percentage of this split, summing to ~100 */
+  sizes: number[]
+}
+
+export type PaneNode = TerminalLeaf | TerminalSplit
+
 export interface TerminalTab {
-  id: string;
-  panes: TerminalPane[];
-  /** Split axis: 'row' = side by side, 'column' = stacked */
-  direction: 'row' | 'column';
-  /** Per-pane size as a percentage of the tab, summing to ~100 */
-  sizes: number[];
+  id: string
+  /** Root of the pane tree — a lone leaf, or nested splits. */
+  root: PaneNode
 }

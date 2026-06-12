@@ -107,7 +107,6 @@ export default function ServerEdit() {
         </p>
         <h1 className="font-display text-5xl leading-none text-foreground">
           {isEdit ? 'EDIT SERVER' : 'NEW SERVER'}
-          <span className="text-phosphor animate-blink">▮</span>
         </h1>
       </div>
 

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { LanguageProvider } from './contexts/LanguageContext'
+import { ShortcutsProvider } from './contexts/ShortcutsContext'
 import './index.css'
 
 // Apply saved phosphor accent before first paint
@@ -23,11 +24,13 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <LanguageProvider>
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
-      </QueryClientProvider>
+      <ShortcutsProvider>
+        <QueryClientProvider client={queryClient}>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </QueryClientProvider>
+      </ShortcutsProvider>
     </LanguageProvider>
   </StrictMode>,
 )

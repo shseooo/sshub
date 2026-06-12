@@ -13,6 +13,17 @@ pub struct AppState {
 pub fn run() {
     tauri::Builder::default()
         .manage(commands::terminal::TerminalSessions::default())
+        .plugin(
+            // Restore window size AND position so it reopens where it was closed
+            // (important on multi-monitor setups). The window starts hidden and is
+            // shown only after restore + first paint, so there's no launch jump.
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION,
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_fs::init())
@@ -21,6 +32,20 @@ pub fn run() {
         .setup(|app| {
             let store = Store::load(app.handle()).map_err(|e| e.to_string())?;
             app.manage(AppState { store });
+
+            // Safety net: the window starts hidden and is normally revealed by the
+            // frontend once React mounts. If the frontend never does (e.g. a load
+            // error), force-show it after a short delay so the app can't get stuck
+            // as an invisible process.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                if let Some(w) = handle.get_webview_window("main") {
+                    if !w.is_visible().unwrap_or(true) {
+                        let _ = w.show();
+                    }
+                }
+            });
 
             // macOS: replace the default menu so Cmd+W no longer closes the
             // window (which would quit this single-window app). Keep Edit

@@ -74,16 +74,26 @@ export interface ImportSummary {
   serversSkipped: number
   keysAdded: number
   keysSkipped: number
+  /** Shortcut prefs carried in the file, for the frontend to apply. */
+  shortcuts?: Record<string, string> | null
 }
 
-/** Writes the secret-free server/key list to a JSON file. */
-export function exportData(path: string): Promise<void> {
-  return invoke<void>('export_data', { path })
+/** Exports the server/key list (+ shortcut prefs). With a passphrase, private keys are bundled and encrypted. */
+export function exportData(
+  path: string,
+  passphrase?: string,
+  shortcuts?: Record<string, string>
+): Promise<void> {
+  return invoke<void>('export_data', {
+    path,
+    passphrase: passphrase ?? null,
+    shortcuts: shortcuts ?? null,
+  })
 }
 
-/** Merges an export file into the store; existing names are skipped. */
-export function importData(path: string): Promise<ImportSummary> {
-  return invoke<ImportSummary>('import_data', { path })
+/** Merges an export file. Encrypted files require the passphrase (rejects with "ENCRYPTED" if missing). */
+export function importData(path: string, passphrase?: string): Promise<ImportSummary> {
+  return invoke<ImportSummary>('import_data', { path, passphrase: passphrase ?? null })
 }
 
 // ==================== Terminal Commands ====================

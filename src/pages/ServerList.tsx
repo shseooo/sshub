@@ -45,7 +45,7 @@ export default function ServerList() {
             {t('list.subtitle', { n: servers.length })}
           </p>
           <h1 className="font-display text-5xl leading-none text-foreground">
-            SERVERS<span className="text-phosphor animate-blink">▮</span>
+            SERVERS
           </h1>
         </div>
         <button

@@ -82,7 +82,7 @@ export default function Dashboard() {
             ~/dashboard
           </p>
           <h1 className="font-display text-5xl leading-none text-foreground">
-            DASHBOARD<span className="text-phosphor animate-blink">▮</span>
+            DASHBOARD
           </h1>
         </div>
         <Link

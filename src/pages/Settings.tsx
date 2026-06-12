@@ -2,11 +2,14 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { syncServersToConfig, syncConfigToServers, exportData, importData } from '@/lib/tauriCommands'
+import { useEffect } from 'react'
 import { serverKeys } from '@/hooks/useServers'
 import { sshKeyKeys } from '@/hooks/useKeys'
 import { useT } from '@/contexts/LanguageContext'
+import { useShortcuts } from '@/contexts/ShortcutsContext'
+import { SHORTCUT_ACTIONS, comboFromEvent, formatCombo, isModifierOnly, type ShortcutAction } from '@/lib/shortcuts'
 import { LANGS, type Lang } from '@/i18n'
-import { ArrowRight, ArrowLeft, Upload, Download } from 'lucide-react'
+import { ArrowRight, ArrowLeft, Upload, Download, KeyRound, X } from 'lucide-react'
 
 type Phosphor = 'green' | 'amber'
 
@@ -21,8 +24,28 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 export default function Settings() {
   const { t, lang, setLang } = useT()
+  const { shortcuts, setShortcut, replaceShortcuts } = useShortcuts()
+  const [capturing, setCapturing] = useState<ShortcutAction | null>(null)
   const queryClient = useQueryClient()
   const [message, setMessage] = useState<string | null>(null)
+
+  // While rebinding, capture the next real key combo (Esc cancels).
+  useEffect(() => {
+    if (!capturing) return
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.code === 'Escape') {
+        setCapturing(null)
+        return
+      }
+      if (isModifierOnly(e.code)) return
+      setShortcut(capturing, comboFromEvent(e))
+      setCapturing(null)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [capturing, setShortcut])
   const [phosphor, setPhosphor] = useState<Phosphor>(() =>
     document.documentElement.classList.contains('amber') ? 'amber' : 'green'
   )
@@ -55,6 +78,25 @@ export default function Settings() {
     onError: (error) => setMessage(t('settings.importFail', { err: String(error) })),
   })
 
+  // Passphrase modal state: 'export' sets one, 'import' enters one to decrypt.
+  const [pphModal, setPphModal] = useState<{ mode: 'export' | 'import'; path: string } | null>(null)
+  const [pph, setPph] = useState('')
+
+  const showImportResult = (s: import('@/lib/tauriCommands').ImportSummary) => {
+    setMessage(
+      t('settings.importDone', {
+        sa: s.serversAdded,
+        ss: s.serversSkipped,
+        ka: s.keysAdded,
+        ks: s.keysSkipped,
+      })
+    )
+    if (s.shortcuts) replaceShortcuts(s.shortcuts)
+    queryClient.invalidateQueries({ queryKey: serverKeys.all })
+    queryClient.invalidateQueries({ queryKey: sshKeyKeys.all })
+  }
+
+  // Plain export — no secrets, safe to sync anywhere.
   const handleExport = async () => {
     setMessage(null)
     const path = await save({
@@ -64,11 +106,24 @@ export default function Settings() {
     })
     if (!path) return
     try {
-      await exportData(path)
+      await exportData(path, undefined, shortcuts)
       setMessage(t('settings.exportDone', { path }))
     } catch (error) {
       setMessage(t('settings.exportFail', { err: String(error) }))
     }
+  }
+
+  // Encrypted export with private keys — pick a path, then ask for a passphrase.
+  const handleSecureExport = async () => {
+    setMessage(null)
+    const path = await save({
+      title: t('settings.exportDialogTitle'),
+      defaultPath: 'sshub-export.enc',
+      filters: [{ name: 'sshub', extensions: ['enc'] }],
+    })
+    if (!path) return
+    setPph('')
+    setPphModal({ mode: 'export', path })
   }
 
   const handleImport = async () => {
@@ -77,23 +132,41 @@ export default function Settings() {
       title: t('settings.importDialogTitle'),
       multiple: false,
       directory: false,
-      filters: [{ name: 'JSON', extensions: ['json'] }],
+      filters: [{ name: 'sshub', extensions: ['json', 'enc'] }],
     })
     if (typeof path !== 'string') return
     try {
-      const s = await importData(path)
-      setMessage(
-        t('settings.importDone', {
-          sa: s.serversAdded,
-          ss: s.serversSkipped,
-          ka: s.keysAdded,
-          ks: s.keysSkipped,
-        })
-      )
-      queryClient.invalidateQueries({ queryKey: serverKeys.all })
-      queryClient.invalidateQueries({ queryKey: sshKeyKeys.all })
+      showImportResult(await importData(path))
     } catch (error) {
-      setMessage(t('settings.importFail', { err: String(error) }))
+      if (String(error).includes('ENCRYPTED')) {
+        // File is encrypted — ask for the passphrase and retry.
+        setPph('')
+        setPphModal({ mode: 'import', path })
+      } else {
+        setMessage(t('settings.importFail', { err: String(error) }))
+      }
+    }
+  }
+
+  const submitPassphrase = async () => {
+    if (!pphModal || !pph) return
+    const { mode, path } = pphModal
+    setPphModal(null)
+    try {
+      if (mode === 'export') {
+        await exportData(path, pph, shortcuts)
+        setMessage(t('settings.exportEncryptedDone', { path }))
+      } else {
+        showImportResult(await importData(path, pph))
+      }
+    } catch (error) {
+      setMessage(
+        mode === 'export'
+          ? t('settings.exportFail', { err: String(error) })
+          : t('settings.importFail', { err: String(error) })
+      )
+    } finally {
+      setPph('')
     }
   }
 
@@ -104,7 +177,7 @@ export default function Settings() {
           ~/settings
         </p>
         <h1 className="font-display text-5xl leading-none text-foreground">
-          SETTINGS<span className="text-phosphor animate-blink">▮</span>
+          SETTINGS
         </h1>
       </div>
 
@@ -169,6 +242,20 @@ export default function Settings() {
               >
                 <Download className="h-3 w-3" />
                 {t('common.export')}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between p-3 bg-muted/60 border border-border">
+              <div>
+                <h3 className="text-sm font-semibold">{t('settings.exportWithKeys')}</h3>
+                <p className="text-xs text-muted-foreground">{t('settings.exportWithKeysDesc')}</p>
+              </div>
+              <button
+                onClick={handleSecureExport}
+                className="flex items-center gap-2 px-3 py-1.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground transition-colors text-xs whitespace-nowrap"
+              >
+                <KeyRound className="h-3 w-3" />
+                {t('settings.exportWithKeys')}
               </button>
             </div>
 
@@ -243,10 +330,35 @@ export default function Settings() {
         </div>
 
         <div className="bg-card border border-border p-5 crt-in" style={{ animationDelay: '250ms' }}>
+          <SectionTitle>Shortcuts</SectionTitle>
+          <p className="text-xs text-muted-foreground mb-4">{t('settings.shortcutsDesc')}</p>
+          <div className="space-y-2">
+            {SHORTCUT_ACTIONS.map(({ action, labelKey }) => (
+              <div
+                key={action}
+                className="flex items-center justify-between p-3 bg-muted/60 border border-border"
+              >
+                <h3 className="text-sm font-semibold">{t(labelKey)}</h3>
+                <button
+                  onClick={() => setCapturing(action)}
+                  className={`min-w-[72px] px-3 py-1.5 text-xs border transition-colors ${
+                    capturing === action
+                      ? 'border-phosphor text-phosphor bg-accent animate-pulse'
+                      : 'border-border text-muted-foreground hover:text-phosphor hover:border-phosphor/60'
+                  }`}
+                >
+                  {capturing === action ? t('settings.pressKeys') : formatCombo(shortcuts[action])}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-card border border-border p-5 crt-in" style={{ animationDelay: '300ms' }}>
           <SectionTitle>System Info</SectionTitle>
           <div className="space-y-1.5 text-xs text-muted-foreground">
             <p>
-              <span className="text-phosphor/70 mr-2">ver</span>0.1.0
+              <span className="text-phosphor/70 mr-2">ver</span>0.1.1
             </p>
             <p>
               <span className="text-phosphor/70 mr-2">data</span>
@@ -259,6 +371,48 @@ export default function Settings() {
           </div>
         </div>
       </div>
+
+      {pphModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card border border-border p-6 w-full max-w-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">{t('settings.passphrase')}</h2>
+              <button onClick={() => setPphModal(null)} className="p-1 hover:bg-muted">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              {pphModal.mode === 'export'
+                ? t('settings.passphraseExportHint')
+                : t('settings.passphraseImportHint')}
+            </p>
+            <input
+              type="password"
+              value={pph}
+              onChange={(e) => setPph(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submitPassphrase()}
+              className="w-full px-3 py-2 bg-background border border-border focus:outline-hidden focus:border-phosphor/60 focus:ring-1 focus:ring-phosphor/40 mb-4"
+              placeholder={t('settings.passphrase')}
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setPphModal(null)}
+                className="px-4 py-2 border border-border text-muted-foreground hover:text-foreground transition-colors text-sm"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={submitPassphrase}
+                disabled={!pph}
+                className="px-4 py-2 bg-primary text-primary-foreground hover:bg-phosphor transition-colors text-sm font-medium disabled:opacity-50"
+              >
+                {pphModal.mode === 'export' ? t('common.export') : t('settings.decrypt')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

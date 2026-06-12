@@ -14,6 +14,9 @@ pub struct ExportBundle {
     pub version: u32,
     pub servers: Vec<Server>,
     pub keys: Vec<SshKey>,
+    /// Opaque frontend prefs (keyboard shortcuts). Set by the export command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shortcuts: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -23,6 +26,9 @@ pub struct ImportSummary {
     pub servers_skipped: usize,
     pub keys_added: usize,
     pub keys_skipped: usize,
+    /// Shortcuts carried in the imported file, for the frontend to apply.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shortcuts: Option<serde_json::Value>,
 }
 
 pub type StoreError = Box<dyn std::error::Error + Send + Sync>;
@@ -303,6 +309,7 @@ impl Store {
             version: 1,
             servers,
             keys,
+            shortcuts: None,
         })
     }
 
@@ -315,6 +322,7 @@ impl Store {
             servers_skipped: 0,
             keys_added: 0,
             keys_skipped: 0,
+            shortcuts: bundle.shortcuts.clone(),
         };
 
         let mut server_names: HashSet<String> =
