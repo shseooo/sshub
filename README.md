@@ -48,6 +48,19 @@ src-tauri/target/release/bundle/macos/sshub.app
 src-tauri/target/release/bundle/dmg/sshub_<버전>_<아키텍처>.dmg
 ```
 
+### macOS: 빌드 후 ad-hoc 서명
+
+Apple Developer 계정이 없으면 빌드 후 ad-hoc 서명을 해야 **Finder/Dock에서 실행**됩니다.
+(서명 안 하거나 하드닝 런타임이 붙으면 GUI 실행 시 macOS가 프로세스를 죽입니다.)
+
+```bash
+codesign --force --deep --sign - src-tauri/target/release/bundle/macos/sshub.app
+```
+
+- 첫 실행 시 "확인되지 않은 개발자" 경고가 나오면 우클릭 → 열기, 또는 시스템 설정 → 개인 정보 보호 및 보안 → "그래도 열기".
+- 다른 Mac으로 복사해 막히면: `xattr -dr com.apple.quarantine /Applications/sshub.app`
+- 경고 없이 배포하려면 Apple Developer Program($99/년) Developer ID 서명 + 공증 필요.
+
 프론트엔드만 빌드/타입체크: `bun run build` (`tsc && vite build`)
 Rust만 검사: `cd src-tauri && cargo check`
 
