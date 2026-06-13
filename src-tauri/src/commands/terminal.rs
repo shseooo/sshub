@@ -65,6 +65,21 @@ pub fn start_terminal_session(
                 c.arg("PreferredAuthentications=keyboard-interactive,password");
                 c.arg("-o");
                 c.arg("PubkeyAuthentication=no");
+            } else if server.auth_type == "pem" {
+                // The PEM lives in a 0600 file (written at save time), not in JSON.
+                if let Ok(pem_path) = crate::commands::key::server_pem_path(&app, id) {
+                    if pem_path.exists() {
+                        c.arg("-i");
+                        c.arg(&pem_path);
+                        c.arg("-o");
+                        c.arg("IdentitiesOnly=yes");
+                    }
+                }
+            } else if server.auth_type == "agent" {
+                // Use keys loaded in ssh-agent (and default identities); skip
+                // password fallback so a missing key fails fast and clearly.
+                c.arg("-o");
+                c.arg("PreferredAuthentications=publickey");
             } else if let Some(key_id) = server.key_id {
                 // Use only the key selected for this server (no agent spraying)
                 if let Ok(key) = state.store.get_ssh_key(key_id) {
@@ -81,9 +96,19 @@ pub fn start_terminal_session(
                     }
                 }
             }
+            // Jump host(s): ssh -J user@bastion[,next-hop...]
+            if let Some(pj) = server.proxy_jump.as_ref().filter(|p| !p.trim().is_empty()) {
+                c.arg("-J");
+                c.arg(pj.trim());
+            }
             c.arg(format!("{}@{}", server.username, server.host));
+            let jump_note = match server.proxy_jump.as_ref().filter(|p| !p.trim().is_empty()) {
+                Some(pj) => format!(" -J {}", pj.trim()),
+                None => String::new(),
+            };
             banner = Some(format!(
-                "\x1b[90m── sshub ──▶ ssh {}@{}{} \x1b[0m(연결 중, 15초 내 응답 없으면 시간 초과)\r\n",
+                "\x1b[90m── sshub ──▶ ssh{} {}@{}{} \x1b[0m(연결 중, 15초 내 응답 없으면 시간 초과)\r\n",
+                jump_note,
                 server.username,
                 server.host,
                 if server.port != 22 {

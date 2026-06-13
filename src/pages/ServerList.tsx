@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Plus, Pencil, Trash2, Star, Terminal } from 'lucide-react'
 import { useDeleteServer, useServers, useToggleFavorite } from '@/hooks/useServers'
 import { useT } from '@/contexts/LanguageContext'
+import { Select } from '@/components/Select'
 
 export default function ServerList() {
   const navigate = useNavigate()
@@ -72,16 +73,16 @@ export default function ServerList() {
           />
         </div>
         {groups.length > 0 && (
-          <select
+          <Select
             value={group}
-            onChange={(e) => setGroup(e.target.value)}
-            className="px-3 py-2 bg-card border border-border focus:outline-hidden focus:border-phosphor/60"
-          >
-            <option value="">{t('list.allGroups')}</option>
-            {groups.map((g) => (
-              <option key={g} value={g}>{g}</option>
-            ))}
-          </select>
+            onChange={setGroup}
+            ariaLabel={t('list.allGroups')}
+            className="min-w-[160px]"
+            options={[
+              { value: '', label: t('list.allGroups') },
+              ...groups.map((g) => ({ value: g, label: g })),
+            ]}
+          />
         )}
       </div>
 

@@ -82,7 +82,7 @@ export default function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 py-3">
-        {navItems.map((item, i) => {
+        {navItems.map((item) => {
           const Icon = item.icon
           const isActive = location.pathname === item.path
           return (
@@ -98,16 +98,6 @@ export default function Sidebar() {
                   : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted'
               )}
             >
-              {!collapsed && (
-                <span
-                  className={cn(
-                    'text-[10px] tabular-nums',
-                    isActive ? 'text-phosphor' : 'text-muted-foreground/60'
-                  )}
-                >
-                  0{i + 1}
-                </span>
-              )}
               <Icon className={cn('h-4 w-4 shrink-0', isActive && 'text-phosphor')} />
               {!collapsed && (
                 <>

@@ -1,14 +1,11 @@
 import { Fragment, useEffect, useRef, useCallback, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
-import { Terminal as XTerm } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import { WebLinksAddon } from '@xterm/addon-web-links'
-import { listen } from '@tauri-apps/api/event'
 import { X, Plus, SquareTerminal, Server, SplitSquareHorizontal, SplitSquareVertical, RotateCw, Radio } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
-import { startTerminalSession, writeTerminal, resizeTerminal, closeTerminal } from '@/lib/tauriCommands'
+import { writeTerminal } from '@/lib/tauriCommands'
+import { TerminalPool } from '@/lib/terminalPool'
 import { useServers } from '@/hooks/useServers'
-import { useTerminal, leaves } from '@/contexts/TerminalContext'
+import { useTerminal, leaves, type DropSide } from '@/contexts/TerminalContext'
 import { useT } from '@/contexts/LanguageContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useShortcuts } from '@/contexts/ShortcutsContext'
@@ -81,150 +78,162 @@ interface NodeCtx {
   visible: boolean
   showHeader: boolean
   focusedPane: string | null
+  editingPane: string | null
   onFocus: (sessionId: string) => void
   onClose: (sessionId: string) => void
   onReconnect: (sessionId: string) => void
   onResize: (splitId: string, sizes: number[]) => void
-  /** Routes typed input — to this pane, or to all panes when broadcast is on. */
-  onInput: (sessionId: string, data: string) => void
+  /** Persistent xterm pool — keeps PTY/scrollback alive across tab moves. */
+  pool: TerminalPool
+  onEditStart: (sessionId: string) => void
+  onRename: (sessionId: string, label: string) => void
+  /** Drag a pane onto a side of another to re-split (with live preview). */
+  dragOverPane: string | null
+  dragOverSide: DropSide | null
+  onDragOverPane: (sessionId: string, side: DropSide) => void
+  onDragEnd: () => void
+  onMove: (srcId: string, dstId: string, side: DropSide) => void
+  /** Merge a dragged tab's panes into this tab next to a target pane. */
+  onMergeTab: (srcTabId: string, dstPaneId: string, side: DropSide) => void
+  /** True when the tab being dragged is this very tab — can't merge into itself. */
+  dragTabSelf: boolean
 }
 
-// One xterm per leaf. Stays mounted (hidden when its tab is inactive) so PTY
-// sessions and scrollback survive tab switches. Refits via ResizeObserver.
-function TerminalView({
-  pane,
-  visible,
-  focused,
-  onFocus,
-  onInput,
+const TAB_DND_TYPE = 'application/x-sshub-tab'
+
+// Double-click to rename; Enter/blur commits, Esc cancels.
+function EditableLabel({
+  value,
+  editing,
+  onStart,
+  onCommit,
+  className,
 }: {
-  pane: TerminalLeaf
-  visible: boolean
-  focused: boolean
-  onFocus: () => void
-  onInput: (data: string) => void
+  value: string
+  editing: boolean
+  onStart: () => void
+  onCommit: (next: string) => void
+  className?: string
 }) {
-  const { t } = useT()
-  const { theme } = useTheme()
-  const containerRef = useRef<HTMLDivElement>(null)
-  const termRef = useRef<XTerm | null>(null)
-  const fitRef = useRef<FitAddon | null>(null)
-  // Keep the latest input router so the once-registered onData handler isn't stale
-  // when broadcast mode toggles.
-  const onInputRef = useRef(onInput)
-  onInputRef.current = onInput
-
-  const safeFit = useCallback(() => {
-    const el = containerRef.current
-    if (el && el.clientWidth > 0 && el.clientHeight > 0) fitRef.current?.fit()
-  }, [])
-
+  const [draft, setDraft] = useState(value)
   useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
+    if (editing) setDraft(value)
+  }, [editing, value])
 
-    const term = new XTerm({
-      cursorBlink: true,
-      fontSize: 14,
-      fontFamily: '"IBM Plex Mono", Menlo, Monaco, "Courier New", monospace',
-      theme: {
-        background: theme.termBg,
-        foreground: theme.termFg,
-        cursor: theme.accent,
-        cursorAccent: theme.termBg,
-        selectionBackground: 'rgba(120, 120, 120, 0.35)',
-      },
-    })
-    const fit = new FitAddon()
-    term.loadAddon(fit)
-    term.loadAddon(new WebLinksAddon())
-    term.open(el)
-    if (el.clientWidth > 0) fit.fit()
-    term.focus()
-    termRef.current = term
-    fitRef.current = fit
+  if (!editing) {
+    return (
+      <span className={className} onDoubleClick={onStart} title={value}>
+        {value}
+      </span>
+    )
+  }
+  return (
+    <input
+      autoFocus
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => onCommit(draft)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onCommit(draft)
+        else if (e.key === 'Escape') onCommit(value)
+      }}
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      className="min-w-0 flex-1 bg-background border border-phosphor/50 px-1 text-xs text-foreground focus:outline-hidden"
+    />
+  )
+}
 
-    const dataDisp = term.onData((data) => {
-      onInputRef.current(data)
-    })
-    const resizeDisp = term.onResize(({ cols, rows }) => {
-      resizeTerminal(pane.sessionId, cols, rows).catch(() => {})
-    })
+const SIDE_STYLE: Record<DropSide, React.CSSProperties> = {
+  left: { top: 0, left: 0, bottom: 0, width: '50%' },
+  right: { top: 0, right: 0, bottom: 0, width: '50%' },
+  top: { top: 0, left: 0, right: 0, height: '50%' },
+  bottom: { bottom: 0, left: 0, right: 0, height: '50%' },
+}
 
-    let cancelled = false
-    const disposables: Array<() => void> = []
+function nearestSide(x: number, y: number): DropSide {
+  const d: Record<DropSide, number> = { left: x, right: 1 - x, top: y, bottom: 1 - y }
+  return (Object.keys(d) as DropSide[]).reduce((a, b) => (d[a] <= d[b] ? a : b))
+}
 
-    ;(async () => {
-      const unlistenOut = await listen<string>(`terminal-output-${pane.sessionId}`, (e) => term.write(e.payload))
-      const unlistenClosed = await listen(`terminal-closed-${pane.sessionId}`, () => {
-        term.write(`\r\n\x1b[90m[${t('term.closedNotice')}]\x1b[0m\r\n`)
-      })
-      disposables.push(unlistenOut, unlistenClosed)
-      if (cancelled) return
-      try {
-        await startTerminalSession(pane.sessionId, pane.serverId)
-        await resizeTerminal(pane.sessionId, term.cols, term.rows)
-      } catch (err) {
-        term.write(`\r\n\x1b[31m${t('term.connectFail')}: ${err}\x1b[0m\r\n`)
-      }
-    })()
-
-    const ro = new ResizeObserver(() => safeFit())
-    ro.observe(el)
-
-    return () => {
-      cancelled = true
-      ro.disconnect()
-      dataDisp.dispose()
-      resizeDisp.dispose()
-      disposables.forEach((d) => d())
-      closeTerminal(pane.sessionId).catch(() => {})
-      term.dispose()
-    }
-  }, [pane.sessionId, pane.serverId, safeFit])
-
-  useEffect(() => {
-    if (visible) {
-      safeFit()
-      termRef.current?.focus()
-    }
-  }, [visible, safeFit])
-
-  // Move the real cursor when this pane becomes the focused one (e.g. via keyboard nav)
-  useEffect(() => {
-    if (focused && visible) termRef.current?.focus()
-  }, [focused, visible])
-
-  // Live-update colors when the theme changes (no session restart).
-  useEffect(() => {
-    const term = termRef.current
-    if (!term) return
-    term.options.theme = {
-      background: theme.termBg,
-      foreground: theme.termFg,
-      cursor: theme.accent,
-      cursorAccent: theme.termBg,
-      selectionBackground: 'rgba(120, 120, 120, 0.35)',
-    }
-  }, [theme.termBg, theme.termFg, theme.accent])
-
-  return <div ref={containerRef} className="h-full w-full" onMouseDown={onFocus} />
+// Insertion boundary (0..count) for a drag at clientX over the tab strip:
+// before the first tab whose horizontal midpoint the cursor hasn't passed.
+function tabDropBoundary(strip: HTMLElement, clientX: number): number {
+  const els = Array.from(strip.querySelectorAll<HTMLElement>('[data-tab-index]'))
+  for (let i = 0; i < els.length; i++) {
+    const r = els[i].getBoundingClientRect()
+    if (clientX < r.left + r.width / 2) return i
+  }
+  return els.length
 }
 
 function LeafView({ leaf, ctx }: { leaf: TerminalLeaf; ctx: NodeCtx }) {
   const { t } = useT()
+  const hostRef = useRef<HTMLDivElement>(null)
+  const { pool, visible, focusedPane } = ctx
+
+  // Reparent this session's persistent xterm into our host. On unmount we do
+  // NOT dispose — the pool keeps it alive so the session survives moving between
+  // tabs (merge/detach). It's disposed only when the session leaves the tree.
+  useEffect(() => {
+    const el = hostRef.current
+    if (!el) return
+    pool.mountInto(leaf.sessionId, leaf.serverId, el)
+    if (visible) pool.focus(leaf.sessionId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leaf.sessionId, leaf.serverId])
+
+  useEffect(() => {
+    if (visible) pool.refit(leaf.sessionId)
+  }, [visible, leaf.sessionId, pool])
+
+  useEffect(() => {
+    if (visible && focusedPane === leaf.sessionId) pool.focus(leaf.sessionId)
+  }, [visible, focusedPane, leaf.sessionId, pool])
+
   return (
-    <div className="relative h-full w-full min-w-0 min-h-0 overflow-hidden flex flex-col">
+    <div
+      className="relative h-full w-full min-w-0 min-h-0 overflow-hidden flex flex-col"
+      onDragOver={(e) => {
+        if (ctx.editingPane != null || ctx.dragTabSelf) return
+        e.preventDefault()
+        const r = e.currentTarget.getBoundingClientRect()
+        const side = nearestSide((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height)
+        ctx.onDragOverPane(leaf.sessionId, side)
+      }}
+      onDrop={(e) => {
+        e.preventDefault()
+        const side = ctx.dragOverSide
+        if (!side) return
+        const tabId = e.dataTransfer.getData(TAB_DND_TYPE)
+        if (tabId) {
+          ctx.onMergeTab(tabId, leaf.sessionId, side)
+          return
+        }
+        const src = e.dataTransfer.getData('text/plain')
+        if (src) ctx.onMove(src, leaf.sessionId, side)
+      }}
+    >
       {ctx.showHeader && (
         <div
           onMouseDown={() => ctx.onFocus(leaf.sessionId)}
-          className={`flex items-center gap-2 px-2 h-6 text-[10px] border-b shrink-0 ${
+          draggable={ctx.editingPane !== leaf.sessionId}
+          onDragStart={(e) => e.dataTransfer.setData('text/plain', leaf.sessionId)}
+          onDragEnd={ctx.onDragEnd}
+          className={`flex items-center gap-2 px-2 h-6 text-[10px] border-b shrink-0 cursor-grab active:cursor-grabbing ${
             ctx.focusedPane === leaf.sessionId
               ? 'bg-accent text-phosphor border-phosphor/40'
               : 'bg-card text-muted-foreground border-border'
           }`}
         >
-          <span className="truncate flex-1">{leaf.label}</span>
+          <EditableLabel
+            value={leaf.label}
+            editing={ctx.editingPane === leaf.sessionId}
+            onStart={() => ctx.onEditStart(leaf.sessionId)}
+            onCommit={(next) => ctx.onRename(leaf.sessionId, next)}
+            className="truncate flex-1"
+          />
           <button
             onClick={(e) => {
               e.stopPropagation()
@@ -247,15 +256,18 @@ function LeafView({ leaf, ctx }: { leaf: TerminalLeaf; ctx: NodeCtx }) {
           </button>
         </div>
       )}
-      <div className="flex-1 min-h-0">
-        <TerminalView
-          pane={leaf}
-          visible={ctx.visible}
-          focused={ctx.focusedPane === leaf.sessionId}
-          onFocus={() => ctx.onFocus(leaf.sessionId)}
-          onInput={(data) => ctx.onInput(leaf.sessionId, data)}
+      <div
+        ref={hostRef}
+        className="flex-1 min-h-0"
+        onMouseDown={() => ctx.onFocus(leaf.sessionId)}
+      />
+      {/* Drop preview: highlights the half where the dragged pane will land */}
+      {ctx.dragOverPane === leaf.sessionId && ctx.dragOverSide && (
+        <div
+          className="absolute pointer-events-none z-20 bg-phosphor/25 border-2 border-phosphor"
+          style={SIDE_STYLE[ctx.dragOverSide]}
         />
-      </div>
+      )}
     </div>
   )
 }
@@ -334,19 +346,97 @@ export default function TerminalHost() {
     reconnectTab,
     reconnectPane,
     setSplitSizes,
+    renameTab,
+    renamePane,
+    movePane,
+    mergeTab,
+    detachPane,
+    reorderTab,
+    closeOthers,
+    closeToRight,
   } = useTerminal()
   const autoConnectedRef = useRef<string | null>(null)
+  const wasVisibleRef = useRef(false)
   const [pickerMode, setPickerMode] = useState<'new' | 'row' | 'column' | null>(null)
   const [focusedPane, setFocusedPane] = useState<string | null>(null)
+  const [editingTab, setEditingTab] = useState<string | null>(null)
+  const [editingPane, setEditingPane] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState<{ pane: string; side: DropSide } | null>(null)
+  const [draggingTab, setDraggingTab] = useState<string | null>(null)
+  // Insertion boundary (0..tabs.length) while a tab or pane is dragged over the
+  // tab bar — drives the drop indicator, reorder, and detach-at-position.
+  const [tabDropIndex, setTabDropIndex] = useState<number | null>(null)
+  const tabStripRef = useRef<HTMLDivElement>(null)
+  // Right-click tab menu (close / close others / close to right).
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number; tabId: string } | null>(null)
   const [activated, setActivated] = useState(false)
   // Broadcast: when on, typing in one pane is sent to every pane of the active tab.
   const [broadcast, setBroadcast] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const { theme } = useTheme()
 
   const current = tabs.find((tb) => tb.id === activeTab) ?? null
 
+  // Persistent xterm pool: terminals live here, not in the tab subtree, so a
+  // session (PTY + scrollback) survives being moved between tabs (merge/detach).
+  const poolRef = useRef<TerminalPool | null>(null)
+  if (!poolRef.current) {
+    poolRef.current = new TerminalPool({
+      onInput: () => {},
+      theme,
+      closedNotice: t('term.closedNotice'),
+      connectFail: t('term.connectFail'),
+    })
+  }
+  const pool = poolRef.current
+
+  // Keep the pool's input router and i18n strings current each render. Broadcast
+  // fans typed input to every pane of the active tab.
+  pool.cfg.onInput = (sid, data) => {
+    if (broadcast) {
+      const tab = tabs.find((tb) => leaves(tb.root).some((l) => l.sessionId === sid))
+      if (tab && tab.id === activeTab) {
+        leaves(tab.root).forEach((l) => writeTerminal(l.sessionId, data).catch(() => {}))
+        return
+      }
+    }
+    writeTerminal(sid, data).catch(() => {})
+  }
+  pool.cfg.closedNotice = t('term.closedNotice')
+  pool.cfg.connectFail = t('term.connectFail')
+
+  // Live theme update (no session restart).
+  useEffect(() => {
+    pool.setTheme(theme)
+  }, [theme, pool])
+
+  // Dispose sessions that left the tab tree (closed panes/tabs, reconnect swaps).
+  useEffect(() => {
+    const live = new Set(tabs.flatMap((tb) => leaves(tb.root)).map((l) => l.sessionId))
+    pool.disposeExcept(live)
+  }, [tabs, pool])
+
+  // After any structural change (split/merge/detach/collapse), refit the active
+  // tab's panes so each terminal fills its new cell.
+  useEffect(() => {
+    if (!current) return
+    leaves(current.root).forEach((l) => pool.refit(l.sessionId))
+  }, [tabs, activeTab, current, pool])
+
+  // Tear everything down if the host itself unmounts (app teardown).
+  useEffect(() => () => pool.disposeAll(), [pool])
+
   useEffect(() => {
     if (visible) setActivated(true)
+  }, [visible])
+
+  // Entering the terminal page with no tabs → open a default local terminal.
+  useEffect(() => {
+    if (visible && !wasVisibleRef.current) {
+      if (!searchParams.get('serverId') && tabs.length === 0) openTab(null, t('term.local'))
+    }
+    wasVisibleRef.current = visible
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible])
 
   const connectToServer = useCallback(
@@ -362,7 +452,13 @@ export default function TerminalHost() {
   useEffect(() => {
     if (!visible) return
     const serverId = searchParams.get('serverId')
-    if (!serverId || servers.length === 0) return
+    // No param (or we just cleared it) → reset the guard so connecting to the
+    // SAME server again later still opens a fresh tab.
+    if (!serverId) {
+      autoConnectedRef.current = null
+      return
+    }
+    if (servers.length === 0) return
     if (autoConnectedRef.current === serverId) return
     autoConnectedRef.current = serverId
     connectToServer(Number(serverId))
@@ -436,6 +532,18 @@ export default function TerminalHost() {
     return () => window.removeEventListener('mousedown', onClick)
   }, [pickerMode])
 
+  // Dismiss the tab context menu on any outside click or key.
+  useEffect(() => {
+    if (!tabMenu) return
+    const close = () => setTabMenu(null)
+    window.addEventListener('mousedown', close)
+    window.addEventListener('keydown', close)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', close)
+    }
+  }, [tabMenu])
+
   const labelFor = (serverId: number | null) => {
     if (serverId == null) return t('term.local')
     const s = servers.find((x) => x.id === serverId)
@@ -447,26 +555,101 @@ export default function TerminalHost() {
     else openTab(serverId, label)
     setPickerMode(null)
   }
-  const tabTitle = (tab: TerminalTab) => leaves(tab.root)[0]?.label ?? t('nav.terminal')
+  const tabTitle = (tab: TerminalTab) => tab.name ?? leaves(tab.root)[0]?.label ?? t('nav.terminal')
   const paneCount = (tab: TerminalTab) => leaves(tab.root).length
+
+  // Closing a tab with a remote session or multiple panes asks for confirmation.
+  const doCloseTab = (tabId: string) => {
+    const tab = tabs.find((tb) => tb.id === tabId)
+    if (!tab) return
+    const ls = leaves(tab.root)
+    const risky = ls.length > 1 || ls.some((l) => l.serverId != null)
+    if (!risky || window.confirm(t('term.confirmCloseTab'))) closeTab(tabId)
+  }
+  const doCloseOthers = (tabId: string) => {
+    if (tabs.length > 1 && window.confirm(t('term.confirmCloseOthers'))) closeOthers(tabId)
+    setTabMenu(null)
+  }
+  const doCloseRight = (tabId: string) => {
+    const idx = tabs.findIndex((tb) => tb.id === tabId)
+    if (idx >= 0 && idx < tabs.length - 1 && window.confirm(t('term.confirmCloseRight'))) closeToRight(tabId)
+    setTabMenu(null)
+  }
 
   return (
     <div className={visible ? 'flex flex-col h-full bg-background' : 'hidden'}>
       {/* Tab bar */}
       <div className="flex items-center h-10 bg-card border-b border-border">
-        <div className="flex-1 flex items-center h-10 overflow-x-auto">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
+        <div
+          ref={tabStripRef}
+          className={`flex-1 flex items-center h-10 overflow-x-auto transition-colors ${
+            tabDropIndex !== null ? 'bg-accent/20' : ''
+          }`}
+          onDragOver={(e) => {
+            // Accept tab drags (reorder) and pane-header drags (detach).
+            const types = Array.from(e.dataTransfer.types)
+            if (!types.includes(TAB_DND_TYPE) && !types.includes('text/plain')) return
+            e.preventDefault()
+            setTabDropIndex(tabDropBoundary(e.currentTarget, e.clientX))
+          }}
+          onDrop={(e) => {
+            e.preventDefault()
+            const idx = tabDropIndex ?? tabs.length
+            // Dropping removes the dragged element, so its `dragend` may not fire
+            // — clear all drag state here.
+            setTabDropIndex(null)
+            setDragOver(null)
+            setDraggingTab(null)
+            const tabId = e.dataTransfer.getData(TAB_DND_TYPE)
+            if (tabId) {
+              reorderTab(tabId, idx)
+              return
+            }
+            const sid = e.dataTransfer.getData('text/plain')
+            if (sid && activeTab) detachPane(activeTab, sid, idx)
+          }}
+        >
+          {tabs.map((tab, i) => (
+            <Fragment key={tab.id}>
+              {tabDropIndex === i && <div className="w-0.5 self-stretch my-1 bg-phosphor shrink-0" />}
+            <div
+              role="button"
+              tabIndex={0}
+              data-tab-index={i}
+              draggable={editingTab !== tab.id}
+              onDragStart={(e) => {
+                e.dataTransfer.setData(TAB_DND_TYPE, tab.id)
+                e.dataTransfer.effectAllowed = 'move'
+                setDraggingTab(tab.id)
+              }}
+              onDragEnd={() => {
+                setDraggingTab(null)
+                setDragOver(null)
+                setTabDropIndex(null)
+              }}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-3 h-full text-xs border-r border-border min-w-[130px] max-w-[220px] border-t-2 transition-colors ${
+              onDoubleClick={() => setEditingTab(tab.id)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setTabMenu({ x: e.clientX, y: e.clientY, tabId: tab.id })
+              }}
+              className={`flex items-center gap-2 px-3 h-full text-xs border-r border-border min-w-[130px] max-w-[220px] border-t-2 transition-colors cursor-pointer ${
                 activeTab === tab.id
                   ? 'bg-background text-phosphor border-t-[var(--phosphor)]'
                   : 'bg-card text-muted-foreground hover:bg-muted border-t-transparent'
               }`}
             >
               <span className={activeTab === tab.id ? 'led shrink-0' : 'led-off shrink-0'} />
-              <span className="truncate">{tabTitle(tab)}</span>
+              <EditableLabel
+                value={tabTitle(tab)}
+                editing={editingTab === tab.id}
+                onStart={() => setEditingTab(tab.id)}
+                onCommit={(next) => {
+                  renameTab(tab.id, next)
+                  setEditingTab(null)
+                }}
+                className="truncate"
+              />
               {paneCount(tab) > 1 && (
                 <span className="text-[9px] text-muted-foreground/70 shrink-0">⊞{paneCount(tab)}</span>
               )}
@@ -486,14 +669,16 @@ export default function TerminalHost() {
                 title={t('common.close')}
                 onClick={(e) => {
                   e.stopPropagation()
-                  closeTab(tab.id)
+                  doCloseTab(tab.id)
                 }}
                 className="p-0.5 hover:bg-secondary hover:text-destructive shrink-0"
               >
                 <X className="h-3 w-3" />
               </span>
-            </button>
+            </div>
+            </Fragment>
           ))}
+          {tabDropIndex === tabs.length && <div className="w-0.5 self-stretch my-1 bg-phosphor shrink-0" />}
 
           <button
             onClick={() => openTab(null, t('term.local'))}
@@ -622,17 +807,37 @@ export default function TerminalHost() {
               visible: tab.id === activeTab,
               showHeader,
               focusedPane,
+              editingPane,
+              dragOverPane: dragOver?.pane ?? null,
+              dragOverSide: dragOver?.side ?? null,
               onFocus: setFocusedPane,
               onClose: (sid) => closePane(tab.id, sid),
               onReconnect: (sid) => reconnectPane(tab.id, sid),
               onResize: (splitId, sizes) => setSplitSizes(tab.id, splitId, sizes),
-              onInput: (sid, data) => {
-                if (broadcast && tab.id === activeTab) {
-                  leaves(tab.root).forEach((l) => writeTerminal(l.sessionId, data).catch(() => {}))
-                } else {
-                  writeTerminal(sid, data).catch(() => {})
-                }
+              onEditStart: (sid) => setEditingPane(sid),
+              onRename: (sid, label) => {
+                renamePane(tab.id, sid, label)
+                setEditingPane(null)
               },
+              onDragOverPane: (sid, side) =>
+                setDragOver((prev) =>
+                  prev?.pane === sid && prev.side === side ? prev : { pane: sid, side }
+                ),
+              onDragEnd: () => {
+                setDragOver(null)
+                setTabDropIndex(null)
+              },
+              onMove: (src, dst, side) => {
+                movePane(tab.id, src, dst, side)
+                setDragOver(null)
+              },
+              onMergeTab: (srcTabId, dstPaneId, side) => {
+                mergeTab(srcTabId, tab.id, dstPaneId, side)
+                setDragOver(null)
+                setDraggingTab(null)
+              },
+              dragTabSelf: draggingTab === tab.id,
+              pool,
             }
             return (
               <div key={tab.id} className={tab.id === activeTab ? 'absolute inset-0' : 'hidden'}>
@@ -641,6 +846,39 @@ export default function TerminalHost() {
             )
           })}
       </div>
+
+      {/* Tab right-click menu */}
+      {tabMenu && (
+        <div
+          className="fixed z-50 min-w-44 bg-popover border border-border shadow-lg crt-in py-1 text-xs"
+          style={{ left: tabMenu.x, top: tabMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => {
+              doCloseTab(tabMenu.tabId)
+              setTabMenu(null)
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-accent hover:text-accent-foreground"
+          >
+            {t('term.closeTab')}
+          </button>
+          <button
+            onClick={() => doCloseOthers(tabMenu.tabId)}
+            disabled={tabs.length <= 1}
+            className="w-full text-left px-3 py-1.5 hover:bg-accent hover:text-accent-foreground disabled:opacity-40 disabled:hover:bg-transparent"
+          >
+            {t('term.closeOthers')}
+          </button>
+          <button
+            onClick={() => doCloseRight(tabMenu.tabId)}
+            disabled={tabs.findIndex((tb) => tb.id === tabMenu.tabId) >= tabs.length - 1}
+            className="w-full text-left px-3 py-1.5 hover:bg-accent hover:text-accent-foreground disabled:opacity-40 disabled:hover:bg-transparent"
+          >
+            {t('term.closeRight')}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

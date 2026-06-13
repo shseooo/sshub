@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { useSaveServer, useServer } from '@/hooks/useServers'
 import { useSshKeys } from '@/hooks/useKeys'
 import { useT } from '@/contexts/LanguageContext'
+import { Select } from '@/components/Select'
 import type { AuthType, CreateServerDto } from '@/types/server'
 
 // Messages are i18n keys; translated when shown.
@@ -49,6 +50,7 @@ export default function ServerEdit() {
   const [authType, setAuthType] = useState<AuthType>('key')
   const [keyId, setKeyId] = useState<number | ''>('')
   const [pemData, setPemData] = useState('')
+  const [proxyJump, setProxyJump] = useState('')
   const [groupName, setGroupName] = useState('')
   const [tags, setTags] = useState('')
   const [notes, setNotes] = useState('')
@@ -63,6 +65,7 @@ export default function ServerEdit() {
       setAuthType(server.authType)
       setKeyId(server.keyId ?? '')
       setPemData(server.pemData ?? '')
+      setProxyJump(server.proxyJump ?? '')
       setGroupName(server.groupName ?? '')
       setTags(tagsToInput(server.tags))
       setNotes(server.notes ?? '')
@@ -84,6 +87,7 @@ export default function ServerEdit() {
       authType,
       keyId: authType === 'key' && keyId !== '' ? keyId : undefined,
       pemData: authType === 'pem' && pemData.trim() ? pemData.trim() : undefined,
+      proxyJump: proxyJump.trim() || undefined,
       groupName: groupName.trim() || undefined,
       tags: inputToTags(tags),
       notes: notes.trim() || undefined,
@@ -140,28 +144,31 @@ export default function ServerEdit() {
 
         <div>
           <label className="block text-sm font-medium mb-1">{t('edit.authType')}</label>
-          <select value={authType} onChange={(e) => setAuthType(e.target.value as AuthType)} className={fieldClass}>
-            <option value="key">{t('edit.authKey')}</option>
-            <option value="password">{t('edit.authPassword')}</option>
-            <option value="pem">{t('edit.authPem')}</option>
-          </select>
+          <Select
+            value={authType}
+            onChange={(v) => setAuthType(v as AuthType)}
+            ariaLabel={t('edit.authType')}
+            options={[
+              { value: 'key', label: t('edit.authKey') },
+              { value: 'password', label: t('edit.authPassword') },
+              { value: 'pem', label: t('edit.authPem') },
+              { value: 'agent', label: t('edit.authAgent') },
+            ]}
+          />
         </div>
 
         {authType === 'key' && (
           <div>
             <label className="block text-sm font-medium mb-1">{t('edit.keySelect')}</label>
-            <select
-              value={keyId}
-              onChange={(e) => setKeyId(e.target.value === '' ? '' : Number(e.target.value))}
-              className={fieldClass}
-            >
-              <option value="">{t('edit.keyDefault')}</option>
-              {keys.map((key) => (
-                <option key={key.id} value={key.id}>
-                  {key.name} ({key.keyType})
-                </option>
-              ))}
-            </select>
+            <Select
+              value={keyId === '' ? '' : String(keyId)}
+              onChange={(v) => setKeyId(v === '' ? '' : Number(v))}
+              ariaLabel={t('edit.keySelect')}
+              options={[
+                { value: '', label: t('edit.keyDefault') },
+                ...keys.map((key) => ({ value: String(key.id), label: `${key.name} (${key.keyType})` })),
+              ]}
+            />
             <p className="text-xs text-muted-foreground mt-1">{t('edit.keyHint')}</p>
           </div>
         )}
@@ -179,8 +186,27 @@ export default function ServerEdit() {
               className={`${fieldClass} font-mono h-32 resize-none`}
               placeholder={'-----BEGIN RSA PRIVATE KEY-----\n...'}
             />
+            <p className="text-xs text-muted-foreground mt-1">
+              {isEdit && !pemData.trim() ? t('edit.pemKeptHint') : t('edit.pemHint')}
+            </p>
           </div>
         )}
+
+        {authType === 'agent' && (
+          <p className="text-xs text-muted-foreground">{t('edit.agentHint')}</p>
+        )}
+
+        <div>
+          <label className="block text-sm font-medium mb-1">{t('edit.proxyJump')}</label>
+          <input
+            type="text"
+            value={proxyJump}
+            onChange={(e) => setProxyJump(e.target.value)}
+            className={fieldClass}
+            placeholder="user@bastion.example.com"
+          />
+          <p className="text-xs text-muted-foreground mt-1">{t('edit.proxyJumpHint')}</p>
+        </div>
 
         <div>
           <label className="block text-sm font-medium mb-1">{t('edit.tags')}</label>

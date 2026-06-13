@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createSshKey, deleteKey, getSshKeys, importSshKey } from '@/lib/tauriCommands'
+import { createSshKey, deleteKey, getSshKeys, importSshKey, updateSshKey } from '@/lib/tauriCommands'
 
 export const sshKeyKeys = {
   all: ['ssh-keys'] as const,
@@ -24,6 +24,14 @@ export function useImportSshKey() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: importSshKey,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: sshKeyKeys.all }),
+  })
+}
+
+export function useUpdateSshKey() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: updateSshKey,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: sshKeyKeys.all }),
   })
 }

@@ -31,6 +31,8 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let store = Store::load(app.handle()).map_err(|e| e.to_string())?;
+            // Move any legacy plaintext server PEMs out of the JSON into 0600 files.
+            commands::server::migrate_server_pems(app.handle(), &store);
             app.manage(AppState { store });
 
             // macOS: frosted-glass backdrop so the UI-translucency setting has
@@ -108,8 +110,11 @@ pub fn run() {
             commands::key::get_ssh_keys,
             commands::key::create_ssh_key,
             commands::key::import_ssh_key,
+            commands::key::update_ssh_key,
+            commands::key::change_key_passphrase,
             commands::key::delete_ssh_key,
             commands::key::load_key_file,
+            commands::key::derive_public_key_from_pem,
             // Backup / sync commands
             commands::backup::export_data,
             commands::backup::import_data,

@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { homeDir } from '@tauri-apps/api/path'
-import { Key, Plus, Trash2, Eye, EyeOff, Copy, X, FolderOpen, FileWarning } from 'lucide-react'
-import { useCreateSshKey, useDeleteSshKey, useImportSshKey, useSshKeys } from '@/hooks/useKeys'
-import { loadKeyFile } from '@/lib/tauriCommands'
+import { Key, Plus, Trash2, Eye, EyeOff, Copy, X, FolderOpen, FileWarning, KeyRound, Pencil } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useCreateSshKey, useDeleteSshKey, useImportSshKey, useUpdateSshKey, useSshKeys, sshKeyKeys } from '@/hooks/useKeys'
+import { loadKeyFile, derivePublicKeyFromPem, changeKeyPassphrase } from '@/lib/tauriCommands'
 import { useT } from '@/contexts/LanguageContext'
+import { Select } from '@/components/Select'
 import type { SshKey, KeyType } from '@/types/key'
 
 function detectKeyType(publicKey: string): KeyType | null {
@@ -89,29 +91,31 @@ function CreateKeyDialog({ onClose }: { onClose: () => void }) {
 
         <div>
           <label className="block text-sm font-medium mb-1">{t('keys.keyType')}</label>
-          <select
+          <Select
             value={keyType}
-            onChange={(e) => setKeyType(e.target.value as KeyType)}
-            className={inputClass}
-          >
-            <option value="ed25519">{t('keys.ed25519Rec')}</option>
-            <option value="rsa">RSA</option>
-            <option value="ecdsa">ECDSA</option>
-          </select>
+            onChange={(v) => setKeyType(v as KeyType)}
+            ariaLabel={t('keys.keyType')}
+            options={[
+              { value: 'ed25519', label: t('keys.ed25519Rec') },
+              { value: 'rsa', label: 'RSA' },
+              { value: 'ecdsa', label: 'ECDSA' },
+            ]}
+          />
         </div>
 
         {keyType === 'rsa' && (
           <div>
             <label className="block text-sm font-medium mb-1">{t('keys.keySize')}</label>
-            <select
-              value={keySize}
-              onChange={(e) => setKeySize(Number(e.target.value))}
-              className={inputClass}
-            >
-              <option value={2048}>2048</option>
-              <option value={3072}>3072</option>
-              <option value={4096}>4096</option>
-            </select>
+            <Select
+              value={String(keySize)}
+              onChange={(v) => setKeySize(Number(v))}
+              ariaLabel={t('keys.keySize')}
+              options={[
+                { value: '2048', label: '2048' },
+                { value: '3072', label: '3072' },
+                { value: '4096', label: '4096' },
+              ]}
+            />
           </div>
         )}
 
@@ -155,11 +159,28 @@ function ImportKeyDialog({ onClose }: { onClose: () => void }) {
   const { t } = useT()
   const importKey = useImportSshKey()
   const [name, setName] = useState('')
-  const [keyType, setKeyType] = useState<KeyType>('ed25519')
+  const [keyType, setKeyType] = useState<KeyType>('rsa')
   const [publicKey, setPublicKey] = useState('')
   const [privateKey, setPrivateKey] = useState('')
   const [passphrase, setPassphrase] = useState('')
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [deriving, setDeriving] = useState(false)
+  const [deriveError, setDeriveError] = useState<string | null>(null)
+
+  const handleDerive = async () => {
+    setDeriveError(null)
+    setDeriving(true)
+    try {
+      const pub = await derivePublicKeyFromPem(privateKey.trim(), passphrase || undefined)
+      setPublicKey(pub)
+      const detected = detectKeyType(pub)
+      if (detected) setKeyType(detected)
+    } catch (err) {
+      setDeriveError(String(err))
+    } finally {
+      setDeriving(false)
+    }
+  }
 
   const handleLoadFile = async () => {
     setLoadError(null)
@@ -235,16 +256,18 @@ function ImportKeyDialog({ onClose }: { onClose: () => void }) {
 
         <div>
           <label className="block text-sm font-medium mb-1">{t('keys.keyType')}</label>
-          <select
+          <Select
             value={keyType}
-            onChange={(e) => setKeyType(e.target.value as KeyType)}
-            className={inputClass}
-          >
-            <option value="ed25519">Ed25519</option>
-            <option value="rsa">RSA</option>
-            <option value="ecdsa">ECDSA</option>
-            <option value="dsa">DSA</option>
-          </select>
+            onChange={(v) => setKeyType(v as KeyType)}
+            ariaLabel={t('keys.keyType')}
+            options={[
+              { value: 'rsa', label: 'RSA' },
+              { value: 'ed25519', label: 'Ed25519' },
+              { value: 'ecdsa', label: 'ECDSA' },
+              { value: 'dsa', label: 'DSA' },
+            ]}
+          />
+          <p className="text-xs text-muted-foreground mt-1">{t('keys.importTypeNote')}</p>
         </div>
 
         <div>
@@ -254,8 +277,8 @@ function ImportKeyDialog({ onClose }: { onClose: () => void }) {
             onChange={(e) => setPublicKey(e.target.value)}
             className={`${inputClass} font-mono h-20 resize-none`}
             placeholder="ssh-ed25519 AAAA... user@host"
-            required
           />
+          <p className="text-xs text-muted-foreground mt-1">{t('keys.publicKeyOptHint')}</p>
         </div>
 
         <div>
@@ -267,6 +290,16 @@ function ImportKeyDialog({ onClose }: { onClose: () => void }) {
             placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n...'}
           />
           <p className="text-xs text-muted-foreground mt-1">{t('keys.privateKeyHint')}</p>
+          <button
+            type="button"
+            onClick={handleDerive}
+            disabled={deriving || !privateKey.trim()}
+            className="mt-2 flex items-center gap-2 px-3 py-1.5 border border-phosphor/40 text-phosphor hover:bg-primary hover:text-primary-foreground hover:border-transparent transition-colors text-xs disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-phosphor"
+          >
+            <KeyRound className="h-3.5 w-3.5" />
+            {deriving ? t('keys.deriving') : t('keys.derivePub')}
+          </button>
+          {deriveError && <p className="text-sm text-destructive break-all mt-1">{deriveError}</p>}
         </div>
 
         <div>
@@ -294,7 +327,7 @@ function ImportKeyDialog({ onClose }: { onClose: () => void }) {
           </button>
           <button
             type="submit"
-            disabled={importKey.isPending || !name.trim() || !publicKey.trim()}
+            disabled={importKey.isPending || !name.trim() || (!publicKey.trim() && !privateKey.trim())}
             className="px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
             {importKey.isPending ? t('keys.importing') : t('keys.import')}
@@ -305,7 +338,219 @@ function ImportKeyDialog({ onClose }: { onClose: () => void }) {
   )
 }
 
-function KeyCard({ keyData }: { keyData: SshKey }) {
+function EditKeyDialog({ keyData, onClose }: { keyData: SshKey; onClose: () => void }) {
+  const { t } = useT()
+  const updateKey = useUpdateSshKey()
+  const qc = useQueryClient()
+  // Re-encrypt the existing key file with a new passphrase (separate action).
+  const [curPass, setCurPass] = useState('')
+  const [newPass, setNewPass] = useState('')
+  const [ppBusy, setPpBusy] = useState(false)
+  const [ppMsg, setPpMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [name, setName] = useState(keyData.name)
+  const [keyType, setKeyType] = useState<KeyType>(keyData.keyType)
+  const [publicKey, setPublicKey] = useState(keyData.publicKey)
+  const [privateKey, setPrivateKey] = useState('')
+  const [passphrase, setPassphrase] = useState('')
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [deriving, setDeriving] = useState(false)
+  const [deriveError, setDeriveError] = useState<string | null>(null)
+
+  const handleDerive = async () => {
+    setDeriveError(null)
+    setDeriving(true)
+    try {
+      const pub = await derivePublicKeyFromPem(privateKey.trim(), passphrase || undefined)
+      setPublicKey(pub)
+      const detected = detectKeyType(pub)
+      if (detected) setKeyType(detected)
+    } catch (err) {
+      setDeriveError(String(err))
+    } finally {
+      setDeriving(false)
+    }
+  }
+
+  const handleLoadFile = async () => {
+    setLoadError(null)
+    let defaultPath: string | undefined
+    try {
+      defaultPath = `${await homeDir()}/.ssh`
+    } catch {
+      defaultPath = undefined
+    }
+    const path = await open({ multiple: false, directory: false, title: t('keys.dialogPickTitle'), defaultPath })
+    if (typeof path !== 'string') return
+    try {
+      const loaded = await loadKeyFile(path)
+      if (loaded.publicKey) {
+        setPublicKey(loaded.publicKey)
+        const detected = detectKeyType(loaded.publicKey)
+        if (detected) setKeyType(detected)
+      }
+      if (loaded.privateKey) setPrivateKey(loaded.privateKey)
+    } catch (err) {
+      setLoadError(t('keys.loadError', { err: String(err) }))
+    }
+  }
+
+  const handleChangePassphrase = async () => {
+    setPpMsg(null)
+    setPpBusy(true)
+    try {
+      await changeKeyPassphrase(keyData.id, curPass || undefined, newPass || undefined)
+      setCurPass('')
+      setNewPass('')
+      setPpMsg({ ok: true, text: t('keys.passphraseChanged') })
+      qc.invalidateQueries({ queryKey: sshKeyKeys.all })
+    } catch (err) {
+      setPpMsg({ ok: false, text: String(err) })
+    } finally {
+      setPpBusy(false)
+    }
+  }
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    updateKey.mutate(
+      {
+        id: keyData.id,
+        name: name.trim(),
+        publicKey: publicKey.trim(),
+        keyType,
+        pemData: privateKey.trim() || undefined,
+        passphrase: passphrase || undefined,
+      },
+      { onSuccess: onClose }
+    )
+  }
+
+  return (
+    <ModalShell title={t('keys.editTitle')} onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium mb-1">{t('keys.name')}</label>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} required autoFocus />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">{t('keys.keyType')}</label>
+          <Select
+            value={keyType}
+            onChange={(v) => setKeyType(v as KeyType)}
+            ariaLabel={t('keys.keyType')}
+            options={[
+              { value: 'rsa', label: 'RSA' },
+              { value: 'ed25519', label: 'Ed25519' },
+              { value: 'ecdsa', label: 'ECDSA' },
+              { value: 'dsa', label: 'DSA' },
+            ]}
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">{t('keys.publicKeyLabel')}</label>
+          <textarea
+            value={publicKey}
+            onChange={(e) => setPublicKey(e.target.value)}
+            className={`${inputClass} font-mono h-20 resize-none`}
+            placeholder="ssh-ed25519 AAAA... user@host"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">{t('keys.replacePrivateOpt')}</label>
+          <button
+            type="button"
+            onClick={handleLoadFile}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-phosphor/40 text-phosphor hover:bg-primary hover:text-primary-foreground hover:border-transparent transition-colors text-sm mb-2"
+          >
+            <FolderOpen className="h-4 w-4" />
+            {t('keys.loadFromFile')}
+          </button>
+          {loadError && <p className="text-sm text-destructive break-all mb-2">{loadError}</p>}
+          <textarea
+            value={privateKey}
+            onChange={(e) => setPrivateKey(e.target.value)}
+            className={`${inputClass} font-mono h-24 resize-none`}
+            placeholder={t('keys.replacePrivatePlaceholder')}
+          />
+          <p className="text-xs text-muted-foreground mt-1">{t('keys.replacePrivateHint')}</p>
+          <button
+            type="button"
+            onClick={handleDerive}
+            disabled={deriving || !privateKey.trim()}
+            className="mt-2 flex items-center gap-2 px-3 py-1.5 border border-phosphor/40 text-phosphor hover:bg-primary hover:text-primary-foreground hover:border-transparent transition-colors text-xs disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-phosphor"
+          >
+            <KeyRound className="h-3.5 w-3.5" />
+            {deriving ? t('keys.deriving') : t('keys.derivePub')}
+          </button>
+          {deriveError && <p className="text-sm text-destructive break-all mt-1">{deriveError}</p>}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">{t('keys.passphraseOpt')}</label>
+          <input
+            type="password"
+            value={passphrase}
+            onChange={(e) => setPassphrase(e.target.value)}
+            className={inputClass}
+            placeholder={t('keys.passphraseImportPlaceholder')}
+          />
+        </div>
+
+        {/* Re-encrypt the existing private key file (real ssh-keygen -p). */}
+        <div className="border border-border rounded-md p-3 space-y-2">
+          <p className="text-sm font-medium">{t('keys.changePassphrase')}</p>
+          {keyData.passphraseProtected && (
+            <input
+              type="password"
+              value={curPass}
+              onChange={(e) => setCurPass(e.target.value)}
+              className={inputClass}
+              placeholder={t('keys.currentPassphrase')}
+            />
+          )}
+          <input
+            type="password"
+            value={newPass}
+            onChange={(e) => setNewPass(e.target.value)}
+            className={inputClass}
+            placeholder={t('keys.newPassphrase')}
+          />
+          <button
+            type="button"
+            onClick={handleChangePassphrase}
+            disabled={ppBusy}
+            className="px-3 py-1.5 border border-phosphor/40 text-phosphor hover:bg-primary hover:text-primary-foreground hover:border-transparent transition-colors text-xs disabled:opacity-40"
+          >
+            {ppBusy ? t('keys.changing') : t('keys.changePassphraseBtn')}
+          </button>
+          {ppMsg && (
+            <p className={`text-xs break-all ${ppMsg.ok ? 'text-phosphor' : 'text-destructive'}`}>{ppMsg.text}</p>
+          )}
+        </div>
+
+        {updateKey.isError && <p className="text-sm text-destructive break-all">{String(updateKey.error)}</p>}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-md bg-secondary text-secondary-foreground hover:bg-secondary/80">
+            {t('common.cancel')}
+          </button>
+          <button
+            type="submit"
+            disabled={updateKey.isPending || !name.trim()}
+            className="px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {updateKey.isPending ? t('common.saving') : t('common.save')}
+          </button>
+        </div>
+      </form>
+    </ModalShell>
+  )
+}
+
+function KeyCard({ keyData, onEdit }: { keyData: SshKey; onEdit: () => void }) {
   const { t } = useT()
   const [isVisible, setIsVisible] = useState(false)
   const deleteKey = useDeleteSshKey()
@@ -342,6 +587,13 @@ function KeyCard({ keyData }: { keyData: SshKey }) {
             {t('keys.missingBadge')}
           </span>
         )}
+        <button
+          onClick={onEdit}
+          title={t('keys.edit')}
+          className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-phosphor"
+        >
+          <Pencil className="h-4 w-4" />
+        </button>
         <button
           onClick={handleDelete}
           className="p-1.5 rounded-md hover:bg-destructive/10 text-destructive"
@@ -380,6 +632,7 @@ export default function KeyManager() {
   const { t } = useT()
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
+  const [editKey, setEditKey] = useState<SshKey | null>(null)
   const { data: keys = [], isLoading } = useSshKeys()
 
   return (
@@ -437,13 +690,14 @@ export default function KeyManager() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {keys.map((key) => (
-            <KeyCard key={key.id} keyData={key} />
+            <KeyCard key={key.id} keyData={key} onEdit={() => setEditKey(key)} />
           ))}
         </div>
       )}
 
       {showCreateDialog && <CreateKeyDialog onClose={() => setShowCreateDialog(false)} />}
       {showImportDialog && <ImportKeyDialog onClose={() => setShowImportDialog(false)} />}
+      {editKey && <EditKeyDialog keyData={editKey} onClose={() => setEditKey(null)} />}
     </div>
   )
 }

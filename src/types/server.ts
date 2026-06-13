@@ -1,4 +1,4 @@
-export type AuthType = 'key' | 'password' | 'pem';
+export type AuthType = 'key' | 'password' | 'pem' | 'agent';
 
 export interface Server {
   id: number;
@@ -9,6 +9,8 @@ export interface Server {
   authType: AuthType;
   keyId: number | null;
   pemData: string | null;
+  /** `-J` jump host(s), e.g. "user@bastion" or "h1,h2". */
+  proxyJump: string | null;
   groupName: string | null;
   /** JSON-encoded string array */
   tags: string | null;
@@ -27,6 +29,7 @@ export interface CreateServerDto {
   authType: AuthType;
   keyId?: number;
   pemData?: string;
+  proxyJump?: string;
   groupName?: string;
   /** JSON-encoded string array */
   tags?: string;

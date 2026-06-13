@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import type { PaneNode, TerminalLeaf, TerminalTab } from '@/types/terminal'
+import { insertAtIndex, reorderTabs, tabsExcept, tabsUpToInclusive } from '@/lib/tabOps'
 
 const uid = () => crypto.randomUUID()
 const even = (n: number) => Array.from({ length: n }, () => 100 / n)
@@ -18,7 +19,7 @@ export function leaves(node: PaneNode): TerminalLeaf[] {
 
 // Split the target leaf along `direction`, adding `addition` after it.
 // Same-direction parent → insert as a sibling (flat); otherwise nest.
-function splitAt(node: PaneNode, sessionId: string, direction: 'row' | 'column', addition: TerminalLeaf): PaneNode {
+export function splitAt(node: PaneNode, sessionId: string, direction: 'row' | 'column', addition: TerminalLeaf): PaneNode {
   if (node.type === 'leaf') {
     if (node.sessionId !== sessionId) return node
     return { type: 'split', id: uid(), direction, children: [node, addition], sizes: [50, 50] }
@@ -32,7 +33,7 @@ function splitAt(node: PaneNode, sessionId: string, direction: 'row' | 'column',
   return { ...node, children: node.children.map((c) => splitAt(c, sessionId, direction, addition)) }
 }
 
-function removeLeaf(node: PaneNode, sessionId: string): PaneNode | null {
+export function removeLeaf(node: PaneNode, sessionId: string): PaneNode | null {
   if (node.type === 'leaf') return node.sessionId === sessionId ? null : node
   const children = node.children
     .map((c) => removeLeaf(c, sessionId))
@@ -58,6 +59,36 @@ function setSizesAt(node: PaneNode, splitId: string, sizes: number[]): PaneNode 
   return { ...node, children: node.children.map((c) => setSizesAt(c, splitId, sizes)) }
 }
 
+function renameLeaf(node: PaneNode, sessionId: string, label: string): PaneNode {
+  if (node.type === 'leaf') return node.sessionId === sessionId ? { ...node, label } : node
+  return { ...node, children: node.children.map((c) => renameLeaf(c, sessionId, label)) }
+}
+
+export type DropSide = 'left' | 'right' | 'top' | 'bottom'
+
+// Insert `addition` (a leaf or a whole subtree) next to the dst leaf,
+// splitting along `dir`. `before` = addition goes on the left/top side.
+export function insertAt(
+  node: PaneNode,
+  dstId: string,
+  addition: PaneNode,
+  dir: 'row' | 'column',
+  before: boolean
+): PaneNode {
+  if (node.type === 'leaf') {
+    if (node.sessionId !== dstId) return node
+    const children = before ? [addition, node] : [node, addition]
+    return { type: 'split', id: uid(), direction: dir, children, sizes: [50, 50] }
+  }
+  const idx = node.children.findIndex((c) => c.type === 'leaf' && c.sessionId === dstId)
+  if (idx !== -1 && node.direction === dir) {
+    const children = [...node.children]
+    children.splice(before ? idx : idx + 1, 0, addition)
+    return { ...node, children, sizes: even(children.length) }
+  }
+  return { ...node, children: node.children.map((c) => insertAt(c, dstId, addition, dir, before)) }
+}
+
 // ==================== Persistence ====================
 
 const LAYOUT_KEY = 'terminal-layout'
@@ -76,12 +107,21 @@ function reviveNode(s: SavedNode): PaneNode {
   return { type: 'split', id: uid(), direction: s.direction, sizes: s.sizes, children: s.children.map(reviveNode) }
 }
 
+interface SavedTab {
+  root: SavedNode
+  name?: string
+}
+
 function loadLayout(): { tabs: TerminalTab[]; activeTab: string | null } {
   try {
     const raw = localStorage.getItem(LAYOUT_KEY)
     if (!raw) return { tabs: [], activeTab: null }
-    const saved = JSON.parse(raw) as { tabs: SavedNode[]; activeIndex: number }
-    const tabs: TerminalTab[] = saved.tabs.map((root) => ({ id: uid(), root: reviveNode(root) }))
+    const saved = JSON.parse(raw) as { tabs: SavedTab[]; activeIndex: number }
+    const tabs: TerminalTab[] = saved.tabs.map((tb) => ({
+      id: uid(),
+      root: reviveNode(tb.root),
+      name: tb.name,
+    }))
     const activeTab = tabs[saved.activeIndex]?.id ?? tabs[0]?.id ?? null
     return { tabs, activeTab }
   } catch {
@@ -104,6 +144,22 @@ interface TerminalContextValue {
   reconnectTab: (tabId: string) => void
   reconnectPane: (tabId: string, sessionId: string) => void
   setSplitSizes: (tabId: string, splitId: string, sizes: number[]) => void
+  /** Rename a tab (empty string clears the custom name → derived label). */
+  renameTab: (tabId: string, name: string) => void
+  /** Rename a pane's label. */
+  renamePane: (tabId: string, sessionId: string, label: string) => void
+  /** Move a pane next to another, splitting on the given side (drag to rearrange). */
+  movePane: (tabId: string, srcId: string, dstId: string, side: DropSide) => void
+  /** Merge a whole tab's panes into another tab, splitting next to a target pane. */
+  mergeTab: (srcTabId: string, dstTabId: string, dstPaneId: string, side: DropSide) => void
+  /** Detach a pane into its own new tab, inserted at `atIndex` (drag onto the tab bar). */
+  detachPane: (srcTabId: string, sessionId: string, atIndex?: number) => void
+  /** Move a tab to a new position (drag to reorder). `toIndex` is an insertion boundary. */
+  reorderTab: (tabId: string, toIndex: number) => void
+  /** Close every tab except this one. */
+  closeOthers: (tabId: string) => void
+  /** Close all tabs to the right of this one. */
+  closeToRight: (tabId: string) => void
 }
 
 const TerminalContext = createContext<TerminalContextValue | null>(null)
@@ -115,7 +171,10 @@ export function TerminalProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const activeIndex = Math.max(0, tabs.findIndex((t) => t.id === activeTab))
-    const data = { tabs: tabs.map((t) => serializeNode(t.root)), activeIndex }
+    const data = {
+      tabs: tabs.map((t) => ({ root: serializeNode(t.root), name: t.name })),
+      activeIndex,
+    }
     localStorage.setItem(LAYOUT_KEY, JSON.stringify(data))
   }, [tabs, activeTab])
 
@@ -177,6 +236,95 @@ export function TerminalProvider({ children }: { children: React.ReactNode }) {
     setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, root: setSizesAt(t.root, splitId, sizes) } : t)))
   }, [])
 
+  const renameTab = useCallback((tabId: string, name: string) => {
+    const trimmed = name.trim()
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, name: trimmed || undefined } : t)))
+  }, [])
+
+  const renamePane = useCallback((tabId: string, sessionId: string, label: string) => {
+    const trimmed = label.trim()
+    if (!trimmed) return
+    setTabs((prev) =>
+      prev.map((t) => (t.id === tabId ? { ...t, root: renameLeaf(t.root, sessionId, trimmed) } : t))
+    )
+  }, [])
+
+  const movePane = useCallback((tabId: string, srcId: string, dstId: string, side: DropSide) => {
+    if (srcId === dstId) return
+    setTabs((prev) =>
+      prev.map((t) => {
+        if (t.id !== tabId) return t
+        const src = leaves(t.root).find((l) => l.sessionId === srcId)
+        if (!src) return t
+        const removed = removeLeaf(t.root, srcId)
+        if (!removed) return t // src was the only pane
+        const dir = side === 'left' || side === 'right' ? 'row' : 'column'
+        const before = side === 'left' || side === 'top'
+        return { ...t, root: insertAt(removed, dstId, src, dir, before) }
+      })
+    )
+  }, [])
+
+  const mergeTab = useCallback((srcTabId: string, dstTabId: string, dstPaneId: string, side: DropSide) => {
+    if (srcTabId === dstTabId) return
+    setTabs((prev) => {
+      const srcTab = prev.find((t) => t.id === srcTabId)
+      if (!srcTab) return prev
+      const dir = side === 'left' || side === 'right' ? 'row' : 'column'
+      const before = side === 'left' || side === 'top'
+      // Drop the source tab; graft its whole pane tree next to the target pane.
+      return prev
+        .filter((t) => t.id !== srcTabId)
+        .map((t) => (t.id === dstTabId ? { ...t, root: insertAt(t.root, dstPaneId, srcTab.root, dir, before) } : t))
+    })
+    setActiveTab(dstTabId)
+  }, [])
+
+  const detachPane = useCallback(
+    (srcTabId: string, sessionId: string, atIndex?: number) => {
+      // Validate against live state OUTSIDE the updater, and generate the new
+      // id once here — not inside setTabs. (StrictMode double-invokes updaters;
+      // generating the id or calling setActiveTab in there desyncs the active
+      // tab from the committed tabs, leaving the new tab unselected = blank.)
+      const src = tabs.find((t) => t.id === srcTabId)
+      if (!src) return
+      const all = leaves(src.root)
+      if (all.length <= 1) return // already a standalone tab
+      const leaf = all.find((l) => l.sessionId === sessionId)
+      if (!leaf) return
+      const newId = uid()
+      setTabs((prev) => {
+        // Source stays (detach needs >1 pane → it keeps ≥1), so insert the new
+        // tab at the requested boundary over the (same-length) array.
+        const collapsed = prev.flatMap((t) => {
+          if (t.id !== srcTabId) return [t]
+          const remaining = removeLeaf(t.root, sessionId)
+          return remaining ? [{ ...t, root: remaining }] : []
+        })
+        return insertAtIndex(collapsed, { id: newId, root: leaf }, atIndex)
+      })
+      setActiveTab(newId)
+    },
+    [tabs]
+  )
+
+  const reorderTab = useCallback((tabId: string, toIndex: number) => {
+    setTabs((prev) => reorderTabs(prev, tabId, toIndex))
+  }, [])
+
+  const closeOthers = useCallback((tabId: string) => {
+    setTabs((prev) => tabsExcept(prev, tabId))
+    setActiveTab(tabId)
+  }, [])
+
+  const closeToRight = useCallback((tabId: string) => {
+    setTabs((prev) => {
+      const next = tabsUpToInclusive(prev, tabId)
+      setActiveTab((cur) => (next.some((t) => t.id === cur) ? cur : tabId))
+      return next
+    })
+  }, [])
+
   return (
     <TerminalContext.Provider
       value={{
@@ -190,6 +338,14 @@ export function TerminalProvider({ children }: { children: React.ReactNode }) {
         reconnectTab,
         reconnectPane,
         setSplitSizes,
+        renameTab,
+        renamePane,
+        movePane,
+        mergeTab,
+        detachPane,
+        reorderTab,
+        closeOthers,
+        closeToRight,
       }}
     >
       {children}

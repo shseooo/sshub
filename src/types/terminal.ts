@@ -23,4 +23,6 @@ export interface TerminalTab {
   id: string
   /** Root of the pane tree — a lone leaf, or nested splits. */
   root: PaneNode
+  /** Optional custom tab name; falls back to the first leaf's label. */
+  name?: string
 }

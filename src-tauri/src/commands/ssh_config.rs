@@ -89,11 +89,13 @@ fn parse_ssh_config(content: &str) -> Vec<CreateServerDto> {
     let mut current_hostname: Option<String> = None;
     let mut current_user: Option<String> = None;
     let mut current_port = 22;
+    let mut current_proxy_jump: Option<String> = None;
 
     let flush = |host: Option<String>,
                  hostname: Option<String>,
                  user: Option<String>,
                  port: i32,
+                 proxy_jump: Option<String>,
                  entries: &mut Vec<CreateServerDto>| {
         if let Some(host) = host {
             // Skip wildcard patterns like "Host *"
@@ -108,6 +110,7 @@ fn parse_ssh_config(content: &str) -> Vec<CreateServerDto> {
                 auth_type: "key".to_string(),
                 key_id: None,
                 pem_data: None,
+                proxy_jump,
                 group_name: None,
                 tags: None,
                 notes: None,
@@ -128,6 +131,7 @@ fn parse_ssh_config(content: &str) -> Vec<CreateServerDto> {
                 current_hostname.take(),
                 current_user.take(),
                 current_port,
+                current_proxy_jump.take(),
                 &mut entries,
             );
             current_host = Some(host.trim().to_string());
@@ -141,6 +145,7 @@ fn parse_ssh_config(content: &str) -> Vec<CreateServerDto> {
                 "hostname" => current_hostname = Some(value),
                 "user" => current_user = Some(value),
                 "port" => current_port = value.parse().unwrap_or(22),
+                "proxyjump" => current_proxy_jump = Some(value),
                 _ => {}
             }
         }
@@ -151,8 +156,58 @@ fn parse_ssh_config(content: &str) -> Vec<CreateServerDto> {
         current_hostname,
         current_user,
         current_port,
+        current_proxy_jump,
         &mut entries,
     );
 
     entries
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_ssh_config;
+
+    #[test]
+    fn parses_basic_host_block() {
+        let cfg = "Host web\n  HostName 10.0.0.1\n  User deploy\n  Port 2222\n";
+        let entries = parse_ssh_config(cfg);
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+        assert_eq!(e.name, "web");
+        assert_eq!(e.host, "10.0.0.1");
+        assert_eq!(e.username, "deploy");
+        assert_eq!(e.port, Some(2222));
+    }
+
+    #[test]
+    fn maps_proxy_jump() {
+        let cfg = "Host internal\n  HostName 10.0.0.9\n  ProxyJump jump@bastion\n";
+        let entries = parse_ssh_config(cfg);
+        assert_eq!(entries[0].proxy_jump.as_deref(), Some("jump@bastion"));
+    }
+
+    #[test]
+    fn skips_wildcard_patterns() {
+        let cfg = "Host *\n  User nobody\n\nHost real\n  HostName example.com\n";
+        let entries = parse_ssh_config(cfg);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "real");
+    }
+
+    #[test]
+    fn applies_defaults_for_missing_fields() {
+        let entries = parse_ssh_config("Host bare\n");
+        let e = &entries[0];
+        assert_eq!(e.host, "bare"); // hostname falls back to the Host alias
+        assert_eq!(e.username, "user");
+        assert_eq!(e.port, Some(22));
+        assert!(e.proxy_jump.is_none());
+    }
+
+    #[test]
+    fn supports_key_equals_value_syntax() {
+        let entries = parse_ssh_config("Host eq\n  HostName=1.2.3.4\n  Port=2200\n");
+        assert_eq!(entries[0].host, "1.2.3.4");
+        assert_eq!(entries[0].port, Some(2200));
+    }
 }

@@ -8,9 +8,12 @@ pub struct Server {
     pub host: String,
     pub port: i32,
     pub username: String,
-    pub auth_type: String, // "key", "password", "pem"
+    pub auth_type: String, // "key", "password", "pem", "agent"
     pub key_id: Option<i64>,
     pub pem_data: Option<String>,
+    /// `-J` jump host(s), e.g. "user@bastion" or "host1,host2". Optional.
+    #[serde(default)]
+    pub proxy_jump: Option<String>,
     pub group_name: Option<String>,
     pub tags: Option<String>, // JSON-encoded string array
     pub is_favorite: bool,
@@ -30,6 +33,8 @@ pub struct CreateServerDto {
     pub auth_type: String,
     pub key_id: Option<i64>,
     pub pem_data: Option<String>,
+    #[serde(default)]
+    pub proxy_jump: Option<String>,
     pub group_name: Option<String>,
     pub tags: Option<String>,
     pub notes: Option<String>,
@@ -46,6 +51,8 @@ pub struct UpdateServerDto {
     pub auth_type: Option<String>,
     pub key_id: Option<i64>,
     pub pem_data: Option<String>,
+    #[serde(default)]
+    pub proxy_jump: Option<String>,
     pub group_name: Option<String>,
     pub tags: Option<String>,
     pub notes: Option<String>,
@@ -81,5 +88,17 @@ pub struct ImportKeyDto {
     pub private_key: Option<String>,
     pub pem_data: Option<String>,
     pub key_type: String,
+    pub passphrase: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateKeyDto {
+    pub id: i64,
+    pub name: String,
+    pub public_key: String,
+    pub key_type: String,
+    /// When present, replaces the stored private key file.
+    pub pem_data: Option<String>,
     pub passphrase: Option<String>,
 }

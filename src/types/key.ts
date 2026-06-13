@@ -28,3 +28,13 @@ export interface ImportKeyDto {
   keyType: KeyType;
   passphrase?: string;
 }
+
+export interface UpdateKeyDto {
+  id: number;
+  name: string;
+  publicKey: string;
+  keyType: KeyType;
+  /** When set, replaces the stored private key. */
+  pemData?: string;
+  passphrase?: string;
+}

@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { CreateServerDto, Server, UpdateServerDto } from '@/types/server'
-import type { CreateKeyDto, ImportKeyDto, SshKey } from '@/types/key'
+import type { CreateKeyDto, ImportKeyDto, UpdateKeyDto, SshKey } from '@/types/key'
 
 // ==================== Server Commands ====================
 
@@ -52,6 +52,19 @@ export function importSshKey(keyData: ImportKeyDto): Promise<SshKey> {
   return invoke<SshKey>('import_ssh_key', { keyData })
 }
 
+export function updateSshKey(keyData: UpdateKeyDto): Promise<SshKey> {
+  return invoke<SshKey>('update_ssh_key', { keyData })
+}
+
+/** Re-encrypt a stored private key with a new passphrase (empty = remove). */
+export function changeKeyPassphrase(
+  id: number,
+  currentPassphrase?: string,
+  newPassphrase?: string
+): Promise<void> {
+  return invoke<void>('change_key_passphrase', { id, currentPassphrase, newPassphrase })
+}
+
 export function deleteKey(id: number): Promise<void> {
   return invoke<void>('delete_ssh_key', { id })
 }
@@ -65,6 +78,11 @@ export interface LoadedKeyFile {
 /** Reads a key file from disk; private keys also pull in the sibling .pub. */
 export function loadKeyFile(path: string): Promise<LoadedKeyFile> {
   return invoke<LoadedKeyFile>('load_key_file', { path })
+}
+
+/** Derive the public key from a private key (PEM) via `ssh-keygen -y`. */
+export function derivePublicKeyFromPem(pem: string, passphrase?: string): Promise<string> {
+  return invoke<string>('derive_public_key_from_pem', { pem, passphrase })
 }
 
 // ==================== Backup / Sync ====================

@@ -149,7 +149,9 @@ impl Store {
             username: dto.username.clone(),
             auth_type: dto.auth_type.clone(),
             key_id: dto.key_id,
-            pem_data: dto.pem_data.clone(),
+            // Secrets never live in the JSON store; server PEMs go to 0600 files.
+            pem_data: None,
+            proxy_jump: dto.proxy_jump.clone(),
             group_name: dto.group_name.clone(),
             tags: dto.tags.clone(),
             is_favorite: false,
@@ -190,9 +192,12 @@ impl Store {
         if dto.key_id.is_some() {
             server.key_id = dto.key_id;
         }
-        if dto.pem_data.is_some() {
-            server.pem_data = dto.pem_data.clone();
-        }
+        // Server PEM is never stored in JSON — the command layer writes it to a
+        // 0600 file. Keep it None here regardless of the DTO.
+        server.pem_data = None;
+        // Always authoritative — the edit form posts the full value, so this
+        // also lets a jump host be cleared by submitting it empty.
+        server.proxy_jump = dto.proxy_jump.clone();
         if dto.group_name.is_some() {
             server.group_name = dto.group_name.clone();
         }
@@ -213,6 +218,26 @@ impl Store {
         let mut data = self.data.lock().map_err(|e| e.to_string())?;
         data.servers.retain(|s| s.id != id);
         self.save(&data)
+    }
+
+    /// Pull any legacy plaintext server PEMs out of the JSON (one-time migration
+    /// to 0600 files). Returns (server id, pem) and clears them from the store.
+    pub fn take_server_pems(&self) -> StoreResult<Vec<(i64, String)>> {
+        let mut data = self.data.lock().map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        let mut changed = false;
+        for s in data.servers.iter_mut() {
+            if let Some(pem) = s.pem_data.take() {
+                changed = true;
+                if !pem.trim().is_empty() {
+                    out.push((s.id, pem));
+                }
+            }
+        }
+        if changed {
+            self.save(&data)?;
+        }
+        Ok(out)
     }
 
     pub fn toggle_favorite(&self, id: i64) -> StoreResult<Server> {
@@ -273,6 +298,38 @@ impl Store {
         data.keys.push(ssh_key.clone());
         self.save(&data)?;
         Ok(ssh_key)
+    }
+
+    pub fn update_ssh_key(
+        &self,
+        id: i64,
+        name: &str,
+        public_key: &str,
+        key_type: &str,
+        passphrase_protected: bool,
+    ) -> StoreResult<SshKey> {
+        let mut data = self.data.lock().map_err(|e| e.to_string())?;
+        let key = data
+            .keys
+            .iter_mut()
+            .find(|k| k.id == id)
+            .ok_or("SSH key not found")?;
+        key.name = name.to_string();
+        key.public_key = public_key.to_string();
+        key.key_type = key_type.to_string();
+        key.passphrase_protected = passphrase_protected;
+        let updated = key.clone();
+        self.save(&data)?;
+        Ok(updated)
+    }
+
+    pub fn set_key_passphrase_protected(&self, id: i64, protected: bool) -> StoreResult<()> {
+        let mut data = self.data.lock().map_err(|e| e.to_string())?;
+        if let Some(k) = data.keys.iter_mut().find(|k| k.id == id) {
+            k.passphrase_protected = protected;
+            self.save(&data)?;
+        }
+        Ok(())
     }
 
     pub fn delete_ssh_key(&self, id: i64) -> StoreResult<()> {
