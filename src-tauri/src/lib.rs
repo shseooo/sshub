@@ -33,6 +33,18 @@ pub fn run() {
             let store = Store::load(app.handle()).map_err(|e| e.to_string())?;
             app.manage(AppState { store });
 
+            // macOS: frosted-glass backdrop so the UI-translucency setting has
+            // something to blur behind it (no effect while the UI is opaque).
+            #[cfg(target_os = "macos")]
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = window_vibrancy::apply_vibrancy(
+                    &w,
+                    window_vibrancy::NSVisualEffectMaterial::HudWindow,
+                    None,
+                    None,
+                );
+            }
+
             // Safety net: the window starts hidden and is normally revealed by the
             // frontend once React mounts. If the frontend never does (e.g. a load
             // error), force-show it after a short delay so the app can't get stuck

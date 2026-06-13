@@ -71,7 +71,6 @@ export default function Dashboard() {
     .filter((s) => s.lastConnectedAt)
     .sort((a, b) => (b.lastConnectedAt! > a.lastConnectedAt! ? 1 : -1))
     .slice(0, 6)
-  const allServers = servers.slice(0, 6)
 
   return (
     <div className="p-6 max-w-6xl">
@@ -135,31 +134,19 @@ export default function Dashboard() {
             </section>
           )}
 
-          <section>
-            <h2 className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground mb-3 flex items-center gap-2">
-              All Servers
-              <span className="flex-1 border-t border-border" />
-            </h2>
-            {servers.length === 0 ? (
-              <div className="bg-card border border-border p-10 text-center crt-in">
-                <p className="font-display text-2xl text-muted-foreground mb-1">NO SERVERS REGISTERED</p>
-                <p className="text-xs text-muted-foreground mb-5">{t('dashboard.emptyHint')}</p>
-                <Link
-                  to="/servers/new"
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground hover:bg-phosphor transition-colors text-sm font-medium"
-                >
-                  <Plus className="h-4 w-4" />
-                  {t('dashboard.addServerCta')}
-                </Link>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {allServers.map((server, i) => (
-                  <ServerCard key={server.id} server={server} index={i} />
-                ))}
-              </div>
-            )}
-          </section>
+          {servers.length === 0 && (
+            <div className="bg-card border border-border p-10 text-center crt-in">
+              <p className="font-display text-2xl text-muted-foreground mb-1">NO SERVERS REGISTERED</p>
+              <p className="text-xs text-muted-foreground mb-5">{t('dashboard.emptyHint')}</p>
+              <Link
+                to="/servers/new"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground hover:bg-phosphor transition-colors text-sm font-medium"
+              >
+                <Plus className="h-4 w-4" />
+                {t('dashboard.addServerCta')}
+              </Link>
+            </div>
+          )}
         </>
       )}
     </div>

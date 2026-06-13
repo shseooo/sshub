@@ -10,6 +10,7 @@ import { startTerminalSession, writeTerminal, resizeTerminal, closeTerminal } fr
 import { useServers } from '@/hooks/useServers'
 import { useTerminal, leaves } from '@/contexts/TerminalContext'
 import { useT } from '@/contexts/LanguageContext'
+import { useTheme } from '@/contexts/ThemeContext'
 import { useShortcuts } from '@/contexts/ShortcutsContext'
 import { comboFromEvent } from '@/lib/shortcuts'
 import type { PaneNode, TerminalLeaf, TerminalTab } from '@/types/terminal'
@@ -104,6 +105,7 @@ function TerminalView({
   onInput: (data: string) => void
 }) {
   const { t } = useT()
+  const { theme } = useTheme()
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<XTerm | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -126,11 +128,11 @@ function TerminalView({
       fontSize: 14,
       fontFamily: '"IBM Plex Mono", Menlo, Monaco, "Courier New", monospace',
       theme: {
-        background: '#0a0d0b',
-        foreground: '#c2d4c4',
-        cursor: '#3dff88',
-        cursorAccent: '#04130a',
-        selectionBackground: 'rgba(61, 255, 136, 0.25)',
+        background: theme.termBg,
+        foreground: theme.termFg,
+        cursor: theme.accent,
+        cursorAccent: theme.termBg,
+        selectionBackground: 'rgba(120, 120, 120, 0.35)',
       },
     })
     const fit = new FitAddon()
@@ -192,6 +194,19 @@ function TerminalView({
   useEffect(() => {
     if (focused && visible) termRef.current?.focus()
   }, [focused, visible])
+
+  // Live-update colors when the theme changes (no session restart).
+  useEffect(() => {
+    const term = termRef.current
+    if (!term) return
+    term.options.theme = {
+      background: theme.termBg,
+      foreground: theme.termFg,
+      cursor: theme.accent,
+      cursorAccent: theme.termBg,
+      selectionBackground: 'rgba(120, 120, 120, 0.35)',
+    }
+  }, [theme.termBg, theme.termFg, theme.accent])
 
   return <div ref={containerRef} className="h-full w-full" onMouseDown={onFocus} />
 }

@@ -5,12 +5,12 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { LanguageProvider } from './contexts/LanguageContext'
 import { ShortcutsProvider } from './contexts/ShortcutsContext'
+import { ThemeProvider } from './contexts/ThemeContext'
+import { applyTheme, loadTheme } from './lib/theme'
 import './index.css'
 
-// Apply saved phosphor accent before first paint
-if (localStorage.getItem('phosphor') === 'amber') {
-  document.documentElement.classList.add('amber')
-}
+// Apply saved theme before first paint to avoid a flash of default colors.
+applyTheme(loadTheme())
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,13 +24,15 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <LanguageProvider>
-      <ShortcutsProvider>
-        <QueryClientProvider client={queryClient}>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
-        </QueryClientProvider>
-      </ShortcutsProvider>
+      <ThemeProvider>
+        <ShortcutsProvider>
+          <QueryClientProvider client={queryClient}>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </QueryClientProvider>
+        </ShortcutsProvider>
+      </ThemeProvider>
     </LanguageProvider>
   </StrictMode>,
 )

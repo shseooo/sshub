@@ -35,8 +35,17 @@ pub fn export_data(
     path: String,
     passphrase: Option<String>,
     shortcuts: Option<serde_json::Value>,
+    server_ids: Option<Vec<i64>>,
+    key_ids: Option<Vec<i64>>,
 ) -> Result<(), String> {
     let mut bundle = state.store.export_bundle().map_err(|e| e.to_string())?;
+    // None = export everything; Some(ids) = only the selected entries.
+    if let Some(ids) = server_ids {
+        bundle.servers.retain(|s| ids.contains(&s.id));
+    }
+    if let Some(ids) = key_ids {
+        bundle.keys.retain(|k| ids.contains(&k.id));
+    }
     bundle.shortcuts = shortcuts;
 
     match passphrase {

@@ -3,15 +3,15 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { syncServersToConfig, syncConfigToServers, exportData, importData } from '@/lib/tauriCommands'
 import { useEffect } from 'react'
-import { serverKeys } from '@/hooks/useServers'
-import { sshKeyKeys } from '@/hooks/useKeys'
+import { serverKeys, useServers } from '@/hooks/useServers'
+import { sshKeyKeys, useSshKeys } from '@/hooks/useKeys'
 import { useT } from '@/contexts/LanguageContext'
 import { useShortcuts } from '@/contexts/ShortcutsContext'
+import { useTheme } from '@/contexts/ThemeContext'
+import { ACCENT_PRESETS, type BgPreset } from '@/lib/theme'
 import { SHORTCUT_ACTIONS, comboFromEvent, formatCombo, isModifierOnly, type ShortcutAction } from '@/lib/shortcuts'
 import { LANGS, type Lang } from '@/i18n'
 import { ArrowRight, ArrowLeft, Upload, Download, KeyRound, X } from 'lucide-react'
-
-type Phosphor = 'green' | 'amber'
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -25,6 +25,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 export default function Settings() {
   const { t, lang, setLang } = useT()
   const { shortcuts, setShortcut, replaceShortcuts } = useShortcuts()
+  const { theme, setTheme } = useTheme()
   const [capturing, setCapturing] = useState<ShortcutAction | null>(null)
   const queryClient = useQueryClient()
   const [message, setMessage] = useState<string | null>(null)
@@ -46,16 +47,6 @@ export default function Settings() {
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [capturing, setShortcut])
-  const [phosphor, setPhosphor] = useState<Phosphor>(() =>
-    document.documentElement.classList.contains('amber') ? 'amber' : 'green'
-  )
-
-  const applyPhosphor = (next: Phosphor) => {
-    document.documentElement.classList.toggle('amber', next === 'amber')
-    localStorage.setItem('phosphor', next)
-    setPhosphor(next)
-  }
-
   const syncTo = useMutation({
     mutationFn: syncServersToConfig,
     onSuccess: () => setMessage(t('settings.syncToDone')),
@@ -82,6 +73,14 @@ export default function Settings() {
   const [pphModal, setPphModal] = useState<{ mode: 'export' | 'import'; path: string } | null>(null)
   const [pph, setPph] = useState('')
 
+  // Export selection modal
+  const { data: serverList = [] } = useServers()
+  const { data: keyList = [] } = useSshKeys()
+  const [exportSel, setExportSel] = useState<{ encrypted: boolean } | null>(null)
+  const [selServers, setSelServers] = useState<Set<number>>(new Set())
+  const [selKeys, setSelKeys] = useState<Set<number>>(new Set())
+  const [inclShortcuts, setInclShortcuts] = useState(true)
+
   const showImportResult = (s: import('@/lib/tauriCommands').ImportSummary) => {
     setMessage(
       t('settings.importDone', {
@@ -96,34 +95,47 @@ export default function Settings() {
     queryClient.invalidateQueries({ queryKey: sshKeyKeys.all })
   }
 
-  // Plain export — no secrets, safe to sync anywhere.
-  const handleExport = async () => {
+  // Open the selection modal; default to everything selected.
+  const openExportSelect = (encrypted: boolean) => {
     setMessage(null)
+    setSelServers(new Set(serverList.map((s) => s.id)))
+    setSelKeys(new Set(keyList.map((k) => k.id)))
+    setInclShortcuts(true)
+    setExportSel({ encrypted })
+  }
+
+  const toggle = (set: Set<number>, id: number) => {
+    const next = new Set(set)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  }
+
+  // After selection: pick a path, then export (encrypted goes via the passphrase modal).
+  const confirmExportSelect = async () => {
+    if (!exportSel) return
+    const { encrypted } = exportSel
+    setExportSel(null)
     const path = await save({
       title: t('settings.exportDialogTitle'),
-      defaultPath: 'sshub-export.json',
-      filters: [{ name: 'JSON', extensions: ['json'] }],
+      defaultPath: encrypted ? 'sshub-export.enc' : 'sshub-export.json',
+      filters: [{ name: 'sshub', extensions: [encrypted ? 'enc' : 'json'] }],
     })
     if (!path) return
+    if (encrypted) {
+      setPph('')
+      setPphModal({ mode: 'export', path })
+      return
+    }
     try {
-      await exportData(path, undefined, shortcuts)
+      await exportData(path, {
+        shortcuts: inclShortcuts ? shortcuts : undefined,
+        serverIds: [...selServers],
+        keyIds: [...selKeys],
+      })
       setMessage(t('settings.exportDone', { path }))
     } catch (error) {
       setMessage(t('settings.exportFail', { err: String(error) }))
     }
-  }
-
-  // Encrypted export with private keys — pick a path, then ask for a passphrase.
-  const handleSecureExport = async () => {
-    setMessage(null)
-    const path = await save({
-      title: t('settings.exportDialogTitle'),
-      defaultPath: 'sshub-export.enc',
-      filters: [{ name: 'sshub', extensions: ['enc'] }],
-    })
-    if (!path) return
-    setPph('')
-    setPphModal({ mode: 'export', path })
   }
 
   const handleImport = async () => {
@@ -154,7 +166,12 @@ export default function Settings() {
     setPphModal(null)
     try {
       if (mode === 'export') {
-        await exportData(path, pph, shortcuts)
+        await exportData(path, {
+          passphrase: pph,
+          shortcuts: inclShortcuts ? shortcuts : undefined,
+          serverIds: [...selServers],
+          keyIds: [...selKeys],
+        })
         setMessage(t('settings.exportEncryptedDone', { path }))
       } else {
         showImportResult(await importData(path, pph))
@@ -237,7 +254,7 @@ export default function Settings() {
                 <p className="text-xs text-muted-foreground">{t('settings.exportDesc')}</p>
               </div>
               <button
-                onClick={handleExport}
+                onClick={() => openExportSelect(false)}
                 className="flex items-center gap-2 px-3 py-1.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground transition-colors text-xs"
               >
                 <Download className="h-3 w-3" />
@@ -251,7 +268,7 @@ export default function Settings() {
                 <p className="text-xs text-muted-foreground">{t('settings.exportWithKeysDesc')}</p>
               </div>
               <button
-                onClick={handleSecureExport}
+                onClick={() => openExportSelect(true)}
                 className="flex items-center gap-2 px-3 py-1.5 border border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground transition-colors text-xs whitespace-nowrap"
               >
                 <KeyRound className="h-3 w-3" />
@@ -301,30 +318,96 @@ export default function Settings() {
         </div>
 
         <div className="bg-card border border-border p-5 crt-in" style={{ animationDelay: '200ms' }}>
-          <SectionTitle>Phosphor</SectionTitle>
-          <div className="flex items-center justify-between p-3 bg-muted/60 border border-border">
-            <div>
-              <h3 className="text-sm font-semibold">{t('settings.phosphorTitle')}</h3>
-              <p className="text-xs text-muted-foreground">{t('settings.phosphorDesc')}</p>
-            </div>
-            <div className="flex">
-              {(['green', 'amber'] as const).map((p) => (
-                <button
-                  key={p}
-                  onClick={() => applyPhosphor(p)}
-                  className={`flex items-center gap-2 px-3 py-1.5 text-xs uppercase tracking-wider border transition-colors ${
-                    phosphor === p
-                      ? 'border-phosphor text-phosphor bg-accent'
-                      : 'border-border text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  <span
-                    className="inline-block w-2.5 h-2.5 rounded-full"
-                    style={{ background: p === 'green' ? '#3dff88' : '#ffb347' }}
+          <SectionTitle>Appearance</SectionTitle>
+          <div className="space-y-2">
+            {/* Accent color */}
+            <div className="flex items-center justify-between p-3 bg-muted/60 border border-border">
+              <h3 className="text-sm font-semibold">{t('settings.accent')}</h3>
+              <div className="flex items-center gap-2">
+                {ACCENT_PRESETS.map((p) => (
+                  <button
+                    key={p.name}
+                    onClick={() => setTheme({ accent: p.value })}
+                    title={p.name}
+                    className={`w-5 h-5 rounded-full border-2 ${
+                      theme.accent.toLowerCase() === p.value.toLowerCase()
+                        ? 'border-foreground'
+                        : 'border-transparent'
+                    }`}
+                    style={{ background: p.value }}
                   />
-                  {p}
-                </button>
-              ))}
+                ))}
+                <input
+                  type="color"
+                  value={theme.accent}
+                  onChange={(e) => setTheme({ accent: e.target.value })}
+                  title={t('settings.custom')}
+                  className="w-6 h-6 bg-transparent cursor-pointer"
+                />
+              </div>
+            </div>
+
+            {/* Background tone */}
+            <div className="flex items-center justify-between p-3 bg-muted/60 border border-border">
+              <h3 className="text-sm font-semibold">{t('settings.bgTone')}</h3>
+              <div className="flex">
+                {(['green', 'neutral', 'warm', 'black'] as BgPreset[]).map((b) => (
+                  <button
+                    key={b}
+                    onClick={() => setTheme({ bg: b })}
+                    className={`px-2.5 py-1 text-[10px] uppercase tracking-wider border transition-colors ${
+                      theme.bg === b
+                        ? 'border-phosphor text-phosphor bg-accent'
+                        : 'border-border text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {b}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Terminal colors */}
+            <div className="flex items-center justify-between p-3 bg-muted/60 border border-border">
+              <h3 className="text-sm font-semibold">{t('settings.termColors')}</h3>
+              <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                <label className="flex items-center gap-1.5">
+                  {t('settings.termFg')}
+                  <input
+                    type="color"
+                    value={theme.termFg}
+                    onChange={(e) => setTheme({ termFg: e.target.value })}
+                    className="w-6 h-6 bg-transparent cursor-pointer"
+                  />
+                </label>
+                <label className="flex items-center gap-1.5">
+                  {t('settings.termBg')}
+                  <input
+                    type="color"
+                    value={theme.termBg}
+                    onChange={(e) => setTheme({ termBg: e.target.value })}
+                    className="w-6 h-6 bg-transparent cursor-pointer"
+                  />
+                </label>
+              </div>
+            </div>
+
+            {/* UI translucency */}
+            <div className="flex items-center justify-between p-3 bg-muted/60 border border-border">
+              <h3 className="text-sm font-semibold">{t('settings.uiOpacity')}</h3>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={0}
+                  max={40}
+                  value={theme.opacity}
+                  onChange={(e) => setTheme({ opacity: Number(e.target.value) })}
+                  className="accent-[var(--phosphor)]"
+                />
+                <span className="text-xs text-muted-foreground tabular-nums w-9 text-right">
+                  {theme.opacity}%
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -358,7 +441,7 @@ export default function Settings() {
           <SectionTitle>System Info</SectionTitle>
           <div className="space-y-1.5 text-xs text-muted-foreground">
             <p>
-              <span className="text-phosphor/70 mr-2">ver</span>0.1.1
+              <span className="text-phosphor/70 mr-2">ver</span>0.1.2
             </p>
             <p>
               <span className="text-phosphor/70 mr-2">data</span>
@@ -371,6 +454,104 @@ export default function Settings() {
           </div>
         </div>
       </div>
+
+      {exportSel && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card border border-border p-5 w-full max-w-md max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold">{t('settings.exportSelectTitle')}</h2>
+              <button onClick={() => setExportSel(null)} className="p-1 hover:bg-muted">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-end mb-2">
+              <button
+                onClick={() => {
+                  const allSel = selServers.size === serverList.length && selKeys.size === keyList.length
+                  setSelServers(allSel ? new Set() : new Set(serverList.map((s) => s.id)))
+                  setSelKeys(allSel ? new Set() : new Set(keyList.map((k) => k.id)))
+                }}
+                className="text-xs text-muted-foreground hover:text-phosphor"
+              >
+                {t('settings.selectAll')}
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto border border-border divide-y divide-border">
+              <div className="px-3 py-1 text-[9px] tracking-[0.25em] uppercase text-muted-foreground/70 bg-muted/40">
+                {t('nav.servers')} ({selServers.size}/{serverList.length})
+              </div>
+              {serverList.length === 0 ? (
+                <p className="px-3 py-2 text-xs text-muted-foreground/70">—</p>
+              ) : (
+                serverList.map((s) => (
+                  <label key={s.id} className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-accent/40">
+                    <input
+                      type="checkbox"
+                      checked={selServers.has(s.id)}
+                      onChange={() => setSelServers((prev) => toggle(prev, s.id))}
+                      className="accent-[var(--phosphor)]"
+                    />
+                    <span className="truncate">
+                      {s.name}{' '}
+                      <span className="text-muted-foreground/70">
+                        {s.username}@{s.host}
+                      </span>
+                    </span>
+                  </label>
+                ))
+              )}
+              <div className="px-3 py-1 text-[9px] tracking-[0.25em] uppercase text-muted-foreground/70 bg-muted/40">
+                SSH Keys ({selKeys.size}/{keyList.length})
+              </div>
+              {keyList.length === 0 ? (
+                <p className="px-3 py-2 text-xs text-muted-foreground/70">—</p>
+              ) : (
+                keyList.map((k) => (
+                  <label key={k.id} className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-accent/40">
+                    <input
+                      type="checkbox"
+                      checked={selKeys.has(k.id)}
+                      onChange={() => setSelKeys((prev) => toggle(prev, k.id))}
+                      className="accent-[var(--phosphor)]"
+                    />
+                    <span className="truncate">
+                      {k.name} <span className="text-muted-foreground/70">({k.keyType})</span>
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+
+            <label className="flex items-center gap-2 mt-3 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                checked={inclShortcuts}
+                onChange={(e) => setInclShortcuts(e.target.checked)}
+                className="accent-[var(--phosphor)]"
+              />
+              {t('settings.includeShortcuts')}
+            </label>
+
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setExportSel(null)}
+                className="px-4 py-2 border border-border text-muted-foreground hover:text-foreground transition-colors text-sm"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={confirmExportSelect}
+                disabled={selServers.size === 0 && selKeys.size === 0 && !inclShortcuts}
+                className="px-4 py-2 bg-primary text-primary-foreground hover:bg-phosphor transition-colors text-sm font-medium disabled:opacity-50"
+              >
+                {t('common.export')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pphModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">

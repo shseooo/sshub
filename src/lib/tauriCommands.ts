@@ -78,16 +78,22 @@ export interface ImportSummary {
   shortcuts?: Record<string, string> | null
 }
 
-/** Exports the server/key list (+ shortcut prefs). With a passphrase, private keys are bundled and encrypted. */
-export function exportData(
-  path: string,
-  passphrase?: string,
+export interface ExportOptions {
+  passphrase?: string
   shortcuts?: Record<string, string>
-): Promise<void> {
+  /** null/undefined = all servers; array = only these ids */
+  serverIds?: number[] | null
+  keyIds?: number[] | null
+}
+
+/** Exports selected (or all) servers/keys (+ optional shortcuts). With a passphrase, private keys are bundled and encrypted. */
+export function exportData(path: string, opts: ExportOptions = {}): Promise<void> {
   return invoke<void>('export_data', {
     path,
-    passphrase: passphrase ?? null,
-    shortcuts: shortcuts ?? null,
+    passphrase: opts.passphrase ?? null,
+    shortcuts: opts.shortcuts ?? null,
+    serverIds: opts.serverIds ?? null,
+    keyIds: opts.keyIds ?? null,
   })
 }
 
