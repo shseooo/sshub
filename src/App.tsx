@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { loadStartRoute } from './lib/startup'
 import Sidebar from './components/Sidebar'
 import TerminalHost from './components/TerminalHost'
 import { TerminalProvider } from './contexts/TerminalContext'
@@ -11,6 +12,15 @@ import KeyManager from './pages/KeyManager'
 import SettingsPage from './pages/Settings'
 
 function App() {
+  const navigate = useNavigate()
+
+  // Open the user's chosen start menu (once, on launch).
+  useEffect(() => {
+    const start = loadStartRoute()
+    if (start !== '/') navigate(start, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Window starts hidden (tauri.conf) so the window-state plugin can restore
   // size/position first, avoiding the launch jump. Reveal it once React has
   // mounted. NOTE: do NOT use requestAnimationFrame here — WebKit suspends rAF
@@ -22,7 +32,18 @@ function App() {
 
   return (
     <TerminalProvider>
-      <div className="flex flex-col h-screen bg-background text-foreground">
+      <div
+        className="flex flex-col h-screen bg-background text-foreground"
+        onDragOver={(e) => {
+          // Swallow OS file drags (dragDropEnabled:false routes them here as
+          // HTML5 events) so the webview doesn't navigate to the dropped file.
+          // Internal pane/tab drags carry 'text/plain'/custom types — untouched.
+          if (e.dataTransfer.types.includes('Files')) e.preventDefault()
+        }}
+        onDrop={(e) => {
+          if (e.dataTransfer.types.includes('Files')) e.preventDefault()
+        }}
+      >
         {/* Dark, draggable strip where the macOS traffic-light buttons sit
             (titleBarStyle: Overlay) — replaces the white native title bar. */}
         <div data-tauri-drag-region className="h-7 shrink-0 bg-background" />

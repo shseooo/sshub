@@ -201,13 +201,24 @@ function ImportKeyDialog({ onClose }: { onClose: () => void }) {
 
     try {
       const loaded = await loadKeyFile(path)
+      if (loaded.privateKey) setPrivateKey(loaded.privateKey)
+      if (loaded.fileName) setName((prev) => prev.trim() || loaded.fileName)
       if (loaded.publicKey) {
         setPublicKey(loaded.publicKey)
         const detected = detectKeyType(loaded.publicKey)
         if (detected) setKeyType(detected)
+      } else if (loaded.privateKey) {
+        // Auto-extract the public key right after loading the file (encrypted
+        // keys derive once a passphrase is entered, or via the manual button).
+        try {
+          const pub = await derivePublicKeyFromPem(loaded.privateKey, passphrase || undefined)
+          setPublicKey(pub)
+          const detected = detectKeyType(pub)
+          if (detected) setKeyType(detected)
+        } catch {
+          /* needs a passphrase — leave empty; user can derive manually */
+        }
       }
-      if (loaded.privateKey) setPrivateKey(loaded.privateKey)
-      if (loaded.fileName) setName((prev) => prev.trim() || loaded.fileName)
     } catch (err) {
       setLoadError(t('keys.loadError', { err: String(err) }))
     }
@@ -383,12 +394,21 @@ function EditKeyDialog({ keyData, onClose }: { keyData: SshKey; onClose: () => v
     if (typeof path !== 'string') return
     try {
       const loaded = await loadKeyFile(path)
+      if (loaded.privateKey) setPrivateKey(loaded.privateKey)
       if (loaded.publicKey) {
         setPublicKey(loaded.publicKey)
         const detected = detectKeyType(loaded.publicKey)
         if (detected) setKeyType(detected)
+      } else if (loaded.privateKey) {
+        try {
+          const pub = await derivePublicKeyFromPem(loaded.privateKey, passphrase || undefined)
+          setPublicKey(pub)
+          const detected = detectKeyType(pub)
+          if (detected) setKeyType(detected)
+        } catch {
+          /* needs a passphrase — user can derive manually */
+        }
       }
-      if (loaded.privateKey) setPrivateKey(loaded.privateKey)
     } catch (err) {
       setLoadError(t('keys.loadError', { err: String(err) }))
     }

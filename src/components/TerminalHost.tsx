@@ -196,7 +196,10 @@ function LeafView({ leaf, ctx }: { leaf: TerminalLeaf; ctx: NodeCtx }) {
     <div
       className="relative h-full w-full min-w-0 min-h-0 overflow-hidden flex flex-col"
       onDragOver={(e) => {
-        if (ctx.editingPane != null || ctx.dragTabSelf) return
+        // Only our pane/tab drags trigger the split overlay — never OS file drags.
+        const types = Array.from(e.dataTransfer.types)
+        const ours = types.includes('text/plain') || types.includes(TAB_DND_TYPE)
+        if (!ours || ctx.editingPane != null || ctx.dragTabSelf) return
         e.preventDefault()
         const r = e.currentTarget.getBoundingClientRect()
         const side = nearestSide((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height)
@@ -423,8 +426,9 @@ export default function TerminalHost() {
     leaves(current.root).forEach((l) => pool.refit(l.sessionId))
   }, [tabs, activeTab, current, pool])
 
-  // Tear everything down if the host itself unmounts (app teardown).
-  useEffect(() => () => pool.disposeAll(), [pool])
+  // NOTE: no disposeAll on unmount — TerminalHost only unmounts at app teardown
+  // (process exit reaps the PTYs). A cleanup here would let React StrictMode's
+  // mount→cleanup→mount cycle kill+respawn every session in dev.
 
   useEffect(() => {
     if (visible) setActivated(true)

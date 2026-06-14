@@ -11,6 +11,8 @@ import { useTheme } from '@/contexts/ThemeContext'
 import { ACCENT_PRESETS, type BgPreset } from '@/lib/theme'
 import { SHORTCUT_ACTIONS, comboFromEvent, formatCombo, isModifierOnly, type ShortcutAction } from '@/lib/shortcuts'
 import { LANGS, type Lang } from '@/i18n'
+import { Select } from '@/components/Select'
+import { START_ROUTES, loadStartRoute, saveStartRoute } from '@/lib/startup'
 import { ArrowRight, ArrowLeft, Upload, Download, KeyRound, X } from 'lucide-react'
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -27,6 +29,7 @@ export default function Settings() {
   const { shortcuts, setShortcut, replaceShortcuts } = useShortcuts()
   const { theme, setTheme } = useTheme()
   const [capturing, setCapturing] = useState<ShortcutAction | null>(null)
+  const [startRoute, setStartRoute] = useState(loadStartRoute)
   const queryClient = useQueryClient()
   const [message, setMessage] = useState<string | null>(null)
 
@@ -289,6 +292,26 @@ export default function Settings() {
                 {t('common.import')}
               </button>
             </div>
+          </div>
+        </div>
+
+        <div className="bg-card border border-border p-5 crt-in" style={{ animationDelay: '140ms' }}>
+          <SectionTitle>General</SectionTitle>
+          <div className="flex items-center justify-between p-3 bg-muted/60 border border-border gap-4">
+            <div>
+              <h3 className="text-sm font-semibold">{t('settings.startMenu')}</h3>
+              <p className="text-xs text-muted-foreground">{t('settings.startMenuDesc')}</p>
+            </div>
+            <Select
+              value={startRoute}
+              onChange={(v) => {
+                setStartRoute(v)
+                saveStartRoute(v)
+              }}
+              ariaLabel={t('settings.startMenu')}
+              className="w-44 shrink-0"
+              options={START_ROUTES.map((r) => ({ value: r.route, label: t(r.labelKey) }))}
+            />
           </div>
         </div>
 
