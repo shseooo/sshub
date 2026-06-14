@@ -464,7 +464,7 @@ export default function Settings() {
           <SectionTitle>System Info</SectionTitle>
           <div className="space-y-1.5 text-xs text-muted-foreground">
             <p>
-              <span className="text-phosphor/70 mr-2">ver</span>0.1.3
+              <span className="text-phosphor/70 mr-2">ver</span>0.1.4
             </p>
             <p>
               <span className="text-phosphor/70 mr-2">data</span>

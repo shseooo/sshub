@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown, Check } from 'lucide-react'
 
 export interface SelectOption {
@@ -8,9 +9,10 @@ export interface SelectOption {
 
 /**
  * App-themed dropdown (CRT/phosphor). Replaces native <select> so both the
- * control and the option list match the rest of the UI. Keyboard: Up/Down to
- * move, Enter/Space to pick, Esc to close, Home/End to jump, and type-ahead by
- * first character.
+ * control and the option list match the rest of the UI. The list is rendered
+ * in a portal with fixed positioning so it can't be clipped or covered by
+ * sibling cards' stacking contexts (e.g. the `crt-in` animation). Keyboard:
+ * Up/Down move, Enter/Space pick, Esc close, Home/End jump, type-ahead.
  */
 export function Select({
   value,
@@ -27,12 +29,15 @@ export function Select({
 }) {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
-  const ref = useRef<HTMLDivElement>(null)
-  const listRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const typeahead = useRef({ buffer: '', at: 0 })
   const current = options.find((o) => o.value === value)
 
   const openMenu = () => {
+    const r = btnRef.current?.getBoundingClientRect()
+    if (r) setPos({ left: r.left, top: r.bottom + 4, width: r.width })
     const i = options.findIndex((o) => o.value === value)
     setActive(i < 0 ? 0 : i)
     setOpen(true)
@@ -41,17 +46,25 @@ export function Select({
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      const t = e.target as Node
+      if (!btnRef.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false)
     }
+    // A fixed-positioned menu would drift on scroll — just close it.
+    const onScroll = () => setOpen(false)
     window.addEventListener('mousedown', onDown)
-    return () => window.removeEventListener('mousedown', onDown)
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onScroll)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onScroll)
+    }
   }, [open])
 
   // Keep the highlighted option in view.
   useEffect(() => {
     if (!open) return
-    const el = listRef.current?.querySelector<HTMLElement>(`[data-idx="${active}"]`)
-    el?.scrollIntoView({ block: 'nearest' })
+    menuRef.current?.querySelector<HTMLElement>(`[data-idx="${active}"]`)?.scrollIntoView({ block: 'nearest' })
   }, [open, active])
 
   const commit = (i: number) => {
@@ -96,7 +109,6 @@ export function Select({
         break
       default:
         if (e.key.length === 1) {
-          // Type-ahead: jump to the next option whose label starts with the key.
           const now = Date.now()
           const ta = typeahead.current
           ta.buffer = now - ta.at > 600 ? e.key : ta.buffer + e.key
@@ -109,8 +121,9 @@ export function Select({
   }
 
   return (
-    <div ref={ref} className={`relative ${className ?? ''}`}>
+    <div className={`relative ${className ?? ''}`}>
       <button
+        ref={btnRef}
         type="button"
         aria-label={ariaLabel}
         aria-haspopup="listbox"
@@ -127,34 +140,38 @@ export function Select({
         />
       </button>
 
-      {open && (
-        <div
-          ref={listRef}
-          role="listbox"
-          className="absolute left-0 right-0 top-full mt-1 max-h-60 overflow-y-auto bg-popover border border-border shadow-lg z-50 crt-in"
-        >
-          {options.map((opt, i) => {
-            const selected = opt.value === value
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                role="option"
-                data-idx={i}
-                aria-selected={selected}
-                onMouseEnter={() => setActive(i)}
-                onClick={() => commit(i)}
-                className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-xs text-left transition-colors ${
-                  i === active ? 'bg-accent text-phosphor' : 'text-foreground hover:bg-accent hover:text-accent-foreground'
-                }`}
-              >
-                <span className="truncate">{opt.label}</span>
-                {selected && <Check className="h-3.5 w-3.5 shrink-0 text-phosphor" />}
-              </button>
-            )
-          })}
-        </div>
-      )}
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="listbox"
+            style={{ position: 'fixed', left: pos.left, top: pos.top, width: pos.width }}
+            className="max-h-60 overflow-y-auto bg-popover border border-border shadow-lg z-[100] crt-in"
+          >
+            {options.map((opt, i) => {
+              const selected = opt.value === value
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="option"
+                  data-idx={i}
+                  aria-selected={selected}
+                  onMouseEnter={() => setActive(i)}
+                  onClick={() => commit(i)}
+                  className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-xs text-left transition-colors ${
+                    i === active ? 'bg-accent text-phosphor' : 'text-foreground hover:bg-accent hover:text-accent-foreground'
+                  }`}
+                >
+                  <span className="truncate">{opt.label}</span>
+                  {selected && <Check className="h-3.5 w-3.5 shrink-0 text-phosphor" />}
+                </button>
+              )
+            })}
+          </div>,
+          document.body
+        )}
     </div>
   )
 }

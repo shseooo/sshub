@@ -55,8 +55,6 @@ cd src-tauri && cargo test    # Rust 테스트
   `codesign --force --deep --sign - src-tauri/target/release/bundle/macos/sshub.app`.
 - 키 rename 시 개인 키 파일도 함께 이동한다(`update_ssh_key`).
 - 탭 표시 이름은 `tab.name ?? 첫 leaf.label`을 따른다.
-- 커밋은 사용자가 요청할 때에만 수행하고, 메시지 끝에
-  `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` 트레일러를 포함한다.
 
 ## MUST NOT
 

@@ -8,8 +8,6 @@
 - 변경을 커밋/완료로 보고하기 전에 `bun run build`, `bun run test`,
   `cd src-tauri && cargo check && cargo test`를 모두 통과시킨다.
 - 사용자에게 노출되는 문자열은 i18n 3종(ko/en/ja)에 동시에 추가한다.
-- 커밋은 사용자가 요청할 때에만 수행하고, 메시지 끝에
-  `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` 트레일러를 포함한다.
 
 ## MUST NOT
 
