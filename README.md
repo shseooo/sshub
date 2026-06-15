@@ -8,11 +8,12 @@
 ## 주요 기능
 
 - **서버 관리** — CRUD, 그룹/태그/메모, 즐겨찾기, 검색·그룹 필터, 최근 연결 표시
-- **SSH 키** — 생성(`ssh-keygen`)·가져오기(파일 선택/붙여넣기, 키 타입 자동 감지), 이 기기에 개인 키 없으면 표시
-- **인증 방식** — SSH 키(`-i`) / 비밀번호(즉시 프롬프트) / PEM
+- **SSH 키** — 생성(`ssh-keygen`)·가져오기(파일/붙여넣기, 공개키 자동 추출)·**편집**(이름/공개키/개인키 교체)·**passphrase 변경**(`ssh-keygen -p`), 개인 키 없으면 표시
+- **인증 방식** — SSH 키(`-i`) / 비밀번호 / PEM / **SSH 에이전트**, **ProxyJump(점프 호스트, `-J`)** 지원
 - **인앱 터미널** — 시스템 `ssh`를 PTY로 실행
   - 다중 탭, **중첩 분할**(좌우·상하 혼합, 드래그 리사이즈)
-  - 패널 포커스 이동, **동시 입력(broadcast)**, 탭/패널 **재연결**
+  - **드래그**로 탭 순서 변경 · 분할→독립 탭 분리 · 탭 병합 (세션·스크롤백 유지)
+  - 패널 포커스 이동, **동시 입력(broadcast)**, 탭/패널 **재연결**, 탭 우클릭 메뉴(닫기/다른 탭/오른쪽)
   - 라우트를 이동해도 세션 유지 + 다음 실행 시 레이아웃 복원
 - **단축키** — 새 탭/패널 닫기/분할/탭 이동/패널 포커스 이동/동시 입력, 설정에서 재바인딩
 - **~/.ssh/config 동기화** — 양방향(덮어쓰기 전 자동 백업)
@@ -20,7 +21,8 @@
 - **다국어** — 한국어 / English / 日本語 (기본은 시스템 언어, 그 외 영어)
 - **테마** — 강조색·배경 톤·터미널 글자/배경색·UI 투명도(macOS 비브런시)
 - **상태 기억** — 창 크기·위치, 사이드바 접힘, 터미널 레이아웃
-- **보안** — 개인 키 평문 미저장·파일 `0600`, CSP 적용
+- **시작 메뉴** — 앱을 켤 때 처음 열 메뉴 선택(설정 → General)
+- **보안** — 개인 키·서버 PEM 평문 미저장(`0600` 파일 분리), 파일명 새니타이즈, 내보내기 시 비밀 제거, CSP 적용
 
 ## 기술 스택
 
@@ -33,6 +35,7 @@
 | UI         | Tailwind CSS v4 (CSS-first, `tailwind.config.js` 없음) |
 | 터미널     | @xterm/xterm 6 + Rust PTY                              |
 | 상태 관리  | TanStack Query v5                                      |
+| 테스트     | Vitest (프론트) · `cargo test` (Rust)                  |
 
 ## 사전 요구사항
 
@@ -42,7 +45,18 @@
 - **Linux**: `webkit2gtk-4.1`, `libappindicator3` 등 [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/) 참고
 - **Windows**: WebView2 (Win10+ 기본 포함), MSVC Build Tools
 
-> 패키지 매니저는 **bun**입니다. `tauri.conf.json`의 beforeBuildCommand가 `bun run build`로 고정되어 있으므로 npm/yarn을 섞어 쓰지 마세요.
+> 패키지 매니저는 **bun**입니다. `tauri.conf.json`의 beforeBuildCommand가 `bun run build`로 고정되어 있으므로 npm/yarn을 섞어 쓰지 마세요. (Node.js는 필요 없음 — bun이 모든 빌드 스크립트를 실행)
+
+## 빠른 설치 (macOS)
+
+빌드 도구(Xcode CLT·Rust·bun) 점검·설치 → 릴리스 빌드 → ad-hoc 서명 → `/Applications` 설치까지 한 번에:
+
+```bash
+./install.sh
+```
+
+- 이미 설치된 도구는 건너뛰고, 재실행해도 안전합니다.
+- Xcode Command Line Tools만 없을 때는 설치창 특성상 한 번 끊기고 "완료 후 재실행" 안내가 나옵니다.
 
 ## 개발 실행
 
@@ -69,7 +83,7 @@ src-tauri/target/release/bundle/dmg/sshub_<버전>_<아키텍처>.dmg
 
 ### macOS: 빌드 후 ad-hoc 서명
 
-Apple Developer 계정이 없으면 빌드 후 ad-hoc 서명을 해야 **Finder/Dock에서 실행**됩니다.
+Apple Developer 계정이 없으면 빌드 후 ad-hoc 서명을 해야 **Finder/Dock에서 실행**됩니다. (위 `./install.sh`가 이 서명 + `/Applications` 설치까지 자동으로 처리합니다.)
 
 ```bash
 codesign --force --deep --sign - src-tauri/target/release/bundle/macos/sshub.app
@@ -80,6 +94,8 @@ codesign --force --deep --sign - src-tauri/target/release/bundle/macos/sshub.app
 - 경고 없이 배포하려면 Apple Developer Program($99/년) Developer ID 서명 + 공증 필요.
 
 프론트엔드만 빌드/타입체크: `bun run build` (`tsc && vite build`) · Rust만 검사: `cd src-tauri && cargo check`
+
+테스트: `bun run test` (Vitest) · `cd src-tauri && cargo test`
 
 ## 단축키 (터미널)
 
