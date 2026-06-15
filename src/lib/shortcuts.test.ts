@@ -43,7 +43,25 @@ describe('formatCombo', () => {
   it('renders symbols and strips Key/Digit prefixes', () => {
     expect(formatCombo('shift+meta+KeyD')).toBe('⇧⌘D')
     expect(formatCombo('meta+Digit1')).toBe('⌘1')
-    expect(formatCombo('alt+meta+ArrowLeft')).toBe('⌥⌘ArrowLeft')
+  })
+
+  it('renders readable symbols for punctuation/arrow codes', () => {
+    expect(formatCombo('shift+meta+Equal')).toBe('⇧⌘=')
+    expect(formatCombo('shift+meta+Minus')).toBe('⇧⌘-')
+    expect(formatCombo('alt+meta+ArrowLeft')).toBe('⌥⌘←')
+  })
+})
+
+describe('font-size shortcut defaults', () => {
+  const ev = (init: KeyboardEventInit) => new KeyboardEvent('keydown', init)
+
+  it('match what Cmd+Shift+=/- produce', () => {
+    expect(comboFromEvent(ev({ metaKey: true, shiftKey: true, code: 'Equal' }))).toBe(
+      DEFAULT_SHORTCUTS.fontIncrease
+    )
+    expect(comboFromEvent(ev({ metaKey: true, shiftKey: true, code: 'Minus' }))).toBe(
+      DEFAULT_SHORTCUTS.fontDecrease
+    )
   })
 })
 

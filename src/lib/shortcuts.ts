@@ -4,6 +4,8 @@ export type ShortcutAction =
   | 'splitRight'
   | 'splitDown'
   | 'broadcast'
+  | 'fontIncrease'
+  | 'fontDecrease'
   | 'focusLeft'
   | 'focusRight'
   | 'focusUp'
@@ -20,6 +22,8 @@ export const DEFAULT_SHORTCUTS: Shortcuts = {
   splitRight: 'meta+KeyD',
   splitDown: 'shift+meta+KeyD',
   broadcast: 'shift+meta+KeyI',
+  fontIncrease: 'shift+meta+Equal',
+  fontDecrease: 'shift+meta+Minus',
   focusLeft: 'alt+meta+ArrowLeft',
   focusRight: 'alt+meta+ArrowRight',
   focusUp: 'alt+meta+ArrowUp',
@@ -33,6 +37,8 @@ export const SHORTCUT_ACTIONS: { action: ShortcutAction; labelKey: string }[] = 
   { action: 'splitRight', labelKey: 'shortcut.splitRight' },
   { action: 'splitDown', labelKey: 'shortcut.splitDown' },
   { action: 'broadcast', labelKey: 'shortcut.broadcast' },
+  { action: 'fontIncrease', labelKey: 'shortcut.fontIncrease' },
+  { action: 'fontDecrease', labelKey: 'shortcut.fontDecrease' },
   { action: 'focusLeft', labelKey: 'shortcut.focusLeft' },
   { action: 'focusRight', labelKey: 'shortcut.focusRight' },
   { action: 'focusUp', labelKey: 'shortcut.focusUp' },
@@ -67,6 +73,17 @@ export function isModifierOnly(code: string): boolean {
 }
 
 const SYMBOLS: Record<string, string> = { meta: '⌘', ctrl: '⌃', alt: '⌥', shift: '⇧' }
+const CODE_SYMBOLS: Record<string, string> = {
+  Equal: '=',
+  Minus: '-',
+  NumpadAdd: '+',
+  NumpadSubtract: '-',
+  ArrowLeft: '←',
+  ArrowRight: '→',
+  ArrowUp: '↑',
+  ArrowDown: '↓',
+  Space: '␣',
+}
 
 /** Human-readable combo, e.g. "meta+shift+KeyD" → "⌘⇧D". */
 export function formatCombo(combo: string): string {
@@ -74,6 +91,7 @@ export function formatCombo(combo: string): string {
     .split('+')
     .map((p) => {
       if (SYMBOLS[p]) return SYMBOLS[p]
+      if (CODE_SYMBOLS[p]) return CODE_SYMBOLS[p]
       if (p.startsWith('Key')) return p.slice(3)
       if (p.startsWith('Digit')) return p.slice(5)
       return p

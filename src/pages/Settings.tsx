@@ -415,6 +415,24 @@ export default function Settings() {
               </div>
             </div>
 
+            {/* Terminal font size */}
+            <div className="flex items-center justify-between p-3 bg-muted/60 border border-border">
+              <h3 className="text-sm font-semibold">{t('settings.termFontSize')}</h3>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={10}
+                  max={24}
+                  value={theme.termFontSize}
+                  onChange={(e) => setTheme({ termFontSize: Number(e.target.value) })}
+                  className="accent-[var(--phosphor)]"
+                />
+                <span className="text-xs text-muted-foreground tabular-nums w-9 text-right">
+                  {theme.termFontSize}px
+                </span>
+              </div>
+            </div>
+
             {/* UI translucency */}
             <div className="flex items-center justify-between p-3 bg-muted/60 border border-border">
               <h3 className="text-sm font-semibold">{t('settings.uiOpacity')}</h3>
@@ -464,7 +482,7 @@ export default function Settings() {
           <SectionTitle>System Info</SectionTitle>
           <div className="space-y-1.5 text-xs text-muted-foreground">
             <p>
-              <span className="text-phosphor/70 mr-2">ver</span>0.1.4
+              <span className="text-phosphor/70 mr-2">ver</span>0.1.5
             </p>
             <p>
               <span className="text-phosphor/70 mr-2">data</span>

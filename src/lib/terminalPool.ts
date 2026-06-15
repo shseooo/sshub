@@ -57,7 +57,7 @@ export class TerminalPool {
     container.className = 'h-full w-full'
     const term = new XTerm({
       cursorBlink: true,
-      fontSize: 14,
+      fontSize: this.cfg.theme.termFontSize,
       fontFamily: FONT,
       theme: xtermTheme(this.cfg.theme),
     })
@@ -136,7 +136,13 @@ export class TerminalPool {
   setTheme(theme: Theme) {
     this.cfg.theme = theme
     const opt = xtermTheme(theme)
-    for (const e of this.entries.values()) e.term.options.theme = opt
+    for (const [id, e] of this.entries) {
+      e.term.options.theme = opt
+      if (e.term.options.fontSize !== theme.termFontSize) {
+        e.term.options.fontSize = theme.termFontSize
+        this.refit(id) // font size changes the cell grid → recompute cols/rows
+      }
+    }
   }
 
   private disposeEntry(sessionId: string, e: Entry) {

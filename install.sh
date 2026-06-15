@@ -69,8 +69,10 @@ echo
 info "의존성 설치 (bun install)…"
 bun install
 
-info "릴리스 빌드 (bun run tauri build) — 몇 분 걸릴 수 있습니다…"
-bun run tauri build
+# --bundles app: .app만 만들고 DMG는 건너뜀 (DMG 생성 시 뜨는 Finder 드래그
+# 레이아웃 단계가 없어 빠르고 조용함). /Applications 복사는 .app만 있으면 충분.
+info "릴리스 빌드 (.app만, DMG 생략) — 몇 분 걸릴 수 있습니다…"
+bun run tauri build --bundles app
 
 APP_SRC="src-tauri/target/release/bundle/macos/${APP_NAME}.app"
 [ -d "$APP_SRC" ] || die "빌드 산출물을 찾지 못했습니다: $APP_SRC"
@@ -98,5 +100,12 @@ xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
 
 echo
 ok "설치 완료 → $DEST"
-bold "Launchpad 또는 'open -a ${APP_NAME}' 로 실행하세요."
-echo "  (첫 실행 시 경고가 뜨면: 우클릭 → 열기)"
+
+# 설치 후 앱 자동 실행.
+info "${APP_NAME} 실행…"
+if open "$DEST"; then
+  ok "${APP_NAME} 실행됨."
+else
+  warn "자동 실행 실패. Launchpad 또는 'open -a ${APP_NAME}' 로 실행하세요."
+  echo "  (경고가 뜨면: 우클릭 → 열기)"
+fi

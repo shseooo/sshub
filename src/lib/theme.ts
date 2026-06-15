@@ -8,6 +8,8 @@ export interface Theme {
   /** Terminal foreground/background, hex */
   termFg: string
   termBg: string
+  /** Terminal font size in px (10..24) */
+  termFontSize: number
   /** UI translucency, 0 (opaque) .. 40 (%) */
   opacity: number
 }
@@ -17,6 +19,7 @@ export const DEFAULT_THEME: Theme = {
   bg: 'green',
   termFg: '#c2d4c4',
   termBg: '#0a0d0b',
+  termFontSize: 14,
   opacity: 0,
 }
 

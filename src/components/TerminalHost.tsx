@@ -376,7 +376,7 @@ export default function TerminalHost() {
   // Broadcast: when on, typing in one pane is sent to every pane of the active tab.
   const [broadcast, setBroadcast] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
-  const { theme } = useTheme()
+  const { theme, setTheme } = useTheme()
 
   const current = tabs.find((tb) => tb.id === activeTab) ?? null
 
@@ -512,6 +512,12 @@ export default function TerminalHost() {
       } else if (combo === shortcuts.broadcast) {
         e.preventDefault()
         setBroadcast((b) => !b)
+      } else if (combo === shortcuts.fontIncrease) {
+        e.preventDefault()
+        setTheme({ termFontSize: Math.min(24, theme.termFontSize + 1) })
+      } else if (combo === shortcuts.fontDecrease) {
+        e.preventDefault()
+        setTheme({ termFontSize: Math.max(10, theme.termFontSize - 1) })
       } else if (combo === shortcuts.focusLeft) {
         focusMove('ArrowLeft', e)
       } else if (combo === shortcuts.focusRight) {
@@ -524,7 +530,7 @@ export default function TerminalHost() {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [visible, current, focusedPane, tabs, shortcuts, openTab, closePane, splitActive, setActiveTab, t])
+  }, [visible, current, focusedPane, tabs, shortcuts, openTab, closePane, splitActive, setActiveTab, t, theme.termFontSize, setTheme])
 
   // Close the picker on outside click
   useEffect(() => {
