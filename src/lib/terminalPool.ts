@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { listen } from '@tauri-apps/api/event'
 import { startTerminalSession, resizeTerminal, closeTerminal } from '@/lib/tauriCommands'
+import { shouldConsumeNavKey } from '@/lib/ime'
 import type { Theme } from '@/lib/theme'
 
 // Live config the host mutates each render so the pool always routes input,
@@ -65,6 +66,18 @@ export class TerminalPool {
     term.loadAddon(fit)
     term.loadAddon(new WebLinksAddon())
     term.open(container)
+
+    // 한글/CJK 조합 보호 (VS Code 와 동일한 전략). ⌘← 같은 모디파이어+방향키는
+    // xterm 이 소비하지 않아 브라우저 기본 동작이 숨겨진 textarea 캐럿을 옮기고,
+    // 이로 인해 IME 조합 오프셋이 어긋나 마지막 글자가 중복된다(xterm.js#6012).
+    // xterm 처리 전에 가로채 preventDefault 하면 캐럿이 움직이지 않아 조합이 보존된다.
+    term.attachCustomKeyEventHandler((e) => {
+      if (shouldConsumeNavKey(e)) {
+        e.preventDefault()
+        return false
+      }
+      return true
+    })
 
     const d1 = term.onData((data) => this.cfg.onInput(sessionId, data))
     const d2 = term.onResize(({ cols, rows }) => {
