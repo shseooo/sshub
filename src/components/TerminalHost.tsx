@@ -177,11 +177,15 @@ function LeafView({ leaf, ctx }: { leaf: TerminalLeaf; ctx: NodeCtx }) {
   // Reparent this session's persistent xterm into our host. On unmount we do
   // NOT dispose — the pool keeps it alive so the session survives moving between
   // tabs (merge/detach). It's disposed only when the session leaves the tree.
+  // NOTE: do NOT focus here. On a cold-start restore every pane of the active
+  // tab mounts at once, so an unconditional focus would let the LAST-mounted
+  // pane win the keyboard focus while the highlight stays on the first pane
+  // (focusedPane). The focus-on-focusedPane effect below is the single source of
+  // truth, so highlight and cursor never desync.
   useEffect(() => {
     const el = hostRef.current
     if (!el) return
     pool.mountInto(leaf.sessionId, leaf.serverId, el)
-    if (visible) pool.focus(leaf.sessionId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leaf.sessionId, leaf.serverId])
 
