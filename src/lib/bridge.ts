@@ -58,3 +58,21 @@ export function saveFileDialog(opts: SaveFileOpts = {}): Promise<string | null> 
 export function homeDir(): Promise<string> {
   return api().invoke('home_dir') as Promise<string>
 }
+
+// ---- terminal scrollback (output history, restored across restarts) ----
+
+export function saveScrollback(sessionId: string, data: string): Promise<void> {
+  return api().invoke('scrollback_save', { sessionId, data }) as Promise<void>
+}
+
+export function loadScrollback(sessionId: string): Promise<string | null> {
+  return api().invoke('scrollback_load', { sessionId }) as Promise<string | null>
+}
+
+export function deleteScrollback(sessionId: string): Promise<void> {
+  return api().invoke('scrollback_delete', { sessionId }) as Promise<void>
+}
+
+export function pruneScrollback(ids: string[]): Promise<void> {
+  return api().invoke('scrollback_prune', { ids }) as Promise<void>
+}

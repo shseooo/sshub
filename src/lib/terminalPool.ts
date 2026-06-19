@@ -1,9 +1,17 @@
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { listen } from '@/lib/bridge'
+import { SerializeAddon } from '@xterm/addon-serialize'
+import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
+import { WebglAddon } from '@xterm/addon-webgl'
+import { listen, loadScrollback, saveScrollback, deleteScrollback } from '@/lib/bridge'
 import { startTerminalSession, resizeTerminal, closeTerminal } from '@/lib/tauriCommands'
 import type { Theme } from '@/lib/theme'
+
+// Keep the last N lines of each terminal's output so a restored session shows
+// its prior history (the live PTY is gone, but the scrollback returns).
+const SCROLLBACK_LINES = 1000
+const SCROLLBACK_DEBOUNCE_MS = 1500
 
 // Live config the host mutates each render so the pool always routes input,
 // theme, and i18n strings with current values.
@@ -27,6 +35,17 @@ interface Entry {
    *  (Chromium re-inserts a just-committed IME syllable into the newly focused
    *  field on tab switch — see attachPhantomGuard). */
   ignorePhantom: boolean
+  serialize: SerializeAddon
+  search: SearchAddon
+  saveTimer: ReturnType<typeof setTimeout> | null
+}
+
+// Highlight colors for in-terminal search (phosphor accent for the active match).
+const SEARCH_DECORATIONS = {
+  matchBackground: '#3dff8855',
+  matchOverviewRuler: '#3dff88',
+  activeMatchBackground: '#3dff88',
+  activeMatchColorOverviewRuler: '#ffffff',
 }
 
 const FONT = '"IBM Plex Mono", Menlo, Monaco, "Courier New", monospace'
@@ -69,7 +88,20 @@ export class TerminalPool {
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.loadAddon(new WebLinksAddon())
+    const serialize = new SerializeAddon()
+    term.loadAddon(serialize)
+    const search = new SearchAddon()
+    term.loadAddon(search)
     term.open(container)
+
+    // GPU renderer for fast large-output scrolling; fall back to DOM on context loss.
+    try {
+      const webgl = new WebglAddon()
+      webgl.onContextLoss(() => webgl.dispose())
+      term.loadAddon(webgl)
+    } catch {
+      /* WebGL unavailable → xterm keeps its DOM renderer */
+    }
 
     const d1 = term.onData((data) => this.cfg.onInput(sessionId, data))
     const d2 = term.onResize(({ cols, rows }) => {
@@ -90,6 +122,9 @@ export class TerminalPool {
       unlisten: [],
       disposed: false,
       ignorePhantom: false,
+      serialize,
+      search,
+      saveTimer: null,
     }
     this.entries.set(sessionId, entry)
 
@@ -107,8 +142,20 @@ export class TerminalPool {
     container.addEventListener('input', phantomGuard, true)
     entry.disps.push({ dispose: () => container.removeEventListener('input', phantomGuard, true) })
 
+    // Debounced persist of the rendered scrollback (capped to N lines).
+    const scheduleSave = () => {
+      if (entry.saveTimer) clearTimeout(entry.saveTimer)
+      entry.saveTimer = setTimeout(() => {
+        entry.saveTimer = null
+        saveScrollback(sessionId, serialize.serialize({ scrollback: SCROLLBACK_LINES })).catch(() => {})
+      }, SCROLLBACK_DEBOUNCE_MS)
+    }
+
     ;(async () => {
-      const unOut = await listen<string>(`terminal-output-${sessionId}`, (e) => term.write(e.payload))
+      const unOut = await listen<string>(`terminal-output-${sessionId}`, (e) => {
+        term.write(e.payload)
+        scheduleSave()
+      })
       const unClosed = await listen(`terminal-closed-${sessionId}`, () =>
         term.write(`\r\n\x1b[90m[${this.cfg.closedNotice}]\x1b[0m\r\n`)
       )
@@ -118,6 +165,18 @@ export class TerminalPool {
         return
       }
       entry.unlisten.push(unOut, unClosed)
+
+      // Show this session's prior output (read-only; the live shell below is new).
+      try {
+        const hist = await loadScrollback(sessionId)
+        if (hist && !entry.disposed) {
+          term.write(hist)
+          term.write('\r\n\x1b[90m── 이전 기록 (세션은 새로 시작됨) ──\x1b[0m\r\n')
+        }
+      } catch {
+        /* no prior scrollback */
+      }
+
       try {
         await startTerminalSession(sessionId, serverId)
         await resizeTerminal(sessionId, term.cols, term.rows)
@@ -183,6 +242,7 @@ export class TerminalPool {
 
   private disposeEntry(sessionId: string, e: Entry) {
     e.disposed = true
+    if (e.saveTimer) clearTimeout(e.saveTimer)
     e.ro.disconnect()
     e.disps.forEach((d) => d.dispose())
     e.unlisten.forEach((u) => u())
@@ -190,11 +250,43 @@ export class TerminalPool {
     e.term.dispose()
     e.container.remove()
     this.entries.delete(sessionId)
+    // The pane was explicitly closed/reconnected (not an app quit), so its
+    // saved history is no longer wanted.
+    deleteScrollback(sessionId).catch(() => {})
   }
 
   /** Dispose every session not in `live` (closed panes/tabs, reconnect swaps). */
   disposeExcept(live: Set<string>) {
     for (const [id, e] of this.entries) if (!live.has(id)) this.disposeEntry(id, e)
+  }
+
+  // ==================== Search ====================
+
+  private searchOpts(opts?: { caseSensitive?: boolean }): ISearchOptions {
+    return { decorations: SEARCH_DECORATIONS, caseSensitive: opts?.caseSensitive ?? false }
+  }
+
+  searchNext(sessionId: string, query: string, opts?: { caseSensitive?: boolean }): boolean {
+    return this.entries.get(sessionId)?.search.findNext(query, this.searchOpts(opts)) ?? false
+  }
+
+  searchPrevious(sessionId: string, query: string, opts?: { caseSensitive?: boolean }): boolean {
+    return this.entries.get(sessionId)?.search.findPrevious(query, this.searchOpts(opts)) ?? false
+  }
+
+  clearSearch(sessionId: string) {
+    this.entries.get(sessionId)?.search.clearDecorations()
+  }
+
+  /** Persist every live terminal's scrollback now (best-effort, on app quit). */
+  flushScrollback() {
+    for (const [id, e] of this.entries) {
+      if (e.saveTimer) {
+        clearTimeout(e.saveTimer)
+        e.saveTimer = null
+      }
+      saveScrollback(id, e.serialize.serialize({ scrollback: SCROLLBACK_LINES })).catch(() => {})
+    }
   }
 
   disposeAll() {

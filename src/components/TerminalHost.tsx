@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useRef, useCallback, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
-import { X, Plus, SquareTerminal, Server, SplitSquareHorizontal, SplitSquareVertical, RotateCw, Radio } from 'lucide-react'
+import { X, Plus, SquareTerminal, Server, SplitSquareHorizontal, SplitSquareVertical, RotateCw, Radio, ChevronUp, ChevronDown } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
 import { writeTerminal } from '@/lib/tauriCommands'
+import { pruneScrollback } from '@/lib/bridge'
 import { TerminalPool } from '@/lib/terminalPool'
 import { useServers } from '@/hooks/useServers'
 import { useTerminal, leaves, type DropSide } from '@/contexts/TerminalContext'
@@ -375,10 +376,31 @@ export default function TerminalHost() {
   const [activated, setActivated] = useState(false)
   // Broadcast: when on, typing in one pane is sent to every pane of the active tab.
   const [broadcast, setBroadcast] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const menuRef = useRef<HTMLDivElement>(null)
   const { theme, setTheme } = useTheme()
 
   const current = tabs.find((tb) => tb.id === activeTab) ?? null
+
+  // The pane in-terminal search acts on: the focused pane, else the active tab's first.
+  const searchTarget = (() => {
+    if (!current) return null
+    const ls = leaves(current.root)
+    return (focusedPane && ls.some((l) => l.sessionId === focusedPane) ? focusedPane : ls[0]?.sessionId) ?? null
+  })()
+
+  const runSearch = (dir: 'next' | 'prev', q = searchQuery) => {
+    if (!searchTarget || !q) return
+    if (dir === 'next') pool.searchNext(searchTarget, q)
+    else pool.searchPrevious(searchTarget, q)
+  }
+
+  const closeSearch = () => {
+    if (searchTarget) pool.clearSearch(searchTarget)
+    setSearchOpen(false)
+    if (searchTarget) pool.focus(searchTarget)
+  }
 
   // Persistent xterm pool: terminals live here, not in the tab subtree, so a
   // session (PTY + scrollback) survives being moved between tabs (merge/detach).
@@ -439,6 +461,18 @@ export default function TerminalHost() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, visible])
 
+  // On launch, drop saved scrollback for sessions no longer in the restored
+  // layout (orphans), and flush live scrollback on app quit (best-effort; the
+  // debounced save already keeps it within ~1.5s of the latest output).
+  useEffect(() => {
+    const liveIds = tabs.flatMap((tb) => leaves(tb.root)).map((l) => l.sessionId)
+    pruneScrollback(liveIds).catch(() => {})
+    const onUnload = () => pool.flushScrollback()
+    window.addEventListener('beforeunload', onUnload)
+    return () => window.removeEventListener('beforeunload', onUnload)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // NOTE: no disposeAll on unmount — TerminalHost only unmounts at app teardown
   // (process exit reaps the PTYs). A cleanup here would let React StrictMode's
   // mount→cleanup→mount cycle kill+respawn every session in dev.
@@ -492,6 +526,12 @@ export default function TerminalHost() {
       if (target) setFocusedPane(target)
     }
     const onKey = (e: KeyboardEvent) => {
+      // In-terminal search: Cmd/Ctrl+F (fixed)
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.code === 'KeyF') {
+        e.preventDefault()
+        setSearchOpen(true)
+        return
+      }
       // Tab switch: Cmd/Ctrl + 1..9 (fixed — a 1..9 family, not rebindable)
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && /^Digit[1-9]$/.test(e.code)) {
         const idx = Number(e.code.slice(5)) - 1
@@ -816,6 +856,50 @@ export default function TerminalHost() {
           broadcast ? 'border-t-2 border-phosphor' : ''
         }`}
       >
+        {searchOpen && (
+          <div className="absolute top-2 right-3 z-50 flex items-center gap-1 bg-popover border border-border shadow-lg px-2 py-1 crt-in">
+            <input
+              autoFocus
+              value={searchQuery}
+              placeholder={t('term.searchPlaceholder')}
+              onChange={(e) => {
+                setSearchQuery(e.target.value)
+                runSearch('next', e.target.value)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  runSearch(e.shiftKey ? 'prev' : 'next')
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  closeSearch()
+                }
+              }}
+              className="bg-input text-foreground text-xs px-2 py-1 w-48 outline-none border border-border focus:border-phosphor"
+            />
+            <button
+              onClick={() => runSearch('prev')}
+              title={t('term.searchPrev')}
+              className="p-1 text-muted-foreground hover:text-phosphor"
+            >
+              <ChevronUp className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => runSearch('next')}
+              title={t('term.searchNext')}
+              className="p-1 text-muted-foreground hover:text-phosphor"
+            >
+              <ChevronDown className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={closeSearch}
+              title={t('common.close')}
+              className="p-1 text-muted-foreground hover:text-destructive"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
         {tabs.length === 0 && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center crt-in">

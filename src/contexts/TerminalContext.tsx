@@ -94,16 +94,20 @@ export function insertAt(
 const LAYOUT_KEY = 'terminal-layout'
 
 type SavedNode =
-  | { type: 'leaf'; serverId: number | null; label: string }
+  // sessionId is persisted so a restored terminal can reload its prior
+  // scrollback (the live PTY is gone, but the output history is shown).
+  | { type: 'leaf'; sessionId?: string; serverId: number | null; label: string }
   | { type: 'split'; direction: 'row' | 'column'; sizes: number[]; children: SavedNode[] }
 
 function serializeNode(node: PaneNode): SavedNode {
-  if (node.type === 'leaf') return { type: 'leaf', serverId: node.serverId, label: node.label }
+  if (node.type === 'leaf')
+    return { type: 'leaf', sessionId: node.sessionId, serverId: node.serverId, label: node.label }
   return { type: 'split', direction: node.direction, sizes: node.sizes, children: node.children.map(serializeNode) }
 }
 
 function reviveNode(s: SavedNode): PaneNode {
-  if (s.type === 'leaf') return newLeaf(s.serverId, s.label)
+  // Keep the saved sessionId (so scrollback matches); fall back for old layouts.
+  if (s.type === 'leaf') return { type: 'leaf', sessionId: s.sessionId ?? uid(), serverId: s.serverId, label: s.label }
   return { type: 'split', id: uid(), direction: s.direction, sizes: s.sizes, children: s.children.map(reviveNode) }
 }
 

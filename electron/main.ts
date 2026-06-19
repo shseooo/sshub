@@ -15,6 +15,7 @@ import { keyFileName, serverPemFileName } from './lib/keyFiles'
 import * as keys from './keys'
 import { syncServersToConfig, syncConfigToServers } from './sshConfigFile'
 import * as backup from './backup'
+import { ScrollbackStore } from './scrollbackStore'
 import type { CreateServerDto, UpdateServerDto } from '@/types/server'
 import type { CreateKeyDto, ImportKeyDto, UpdateKeyDto } from '@/types/key'
 
@@ -24,6 +25,7 @@ const appDataDir = app.getPath('appData')
 const keysDir = join(appDataDir, 'ssh_keys')
 const store = new Store(join(appDataDir, 'sshub.json'))
 const keyCtx: keys.KeyCtx = { store, keysDir }
+const scrollback = new ScrollbackStore(join(appDataDir, 'sshub_scrollback'))
 
 const sessions = new Map<string, pty.IPty>()
 
@@ -224,6 +226,19 @@ ipcMain.handle('invoke', async (e, cmd: string, args: Record<string, unknown> = 
       return null
     case 'import_data':
       return backup.importData({ store, keysDir }, args.path as string, args.passphrase as string | null)
+
+    // ---- terminal scrollback persistence ----
+    case 'scrollback_save':
+      scrollback.save(args.sessionId as string, args.data as string)
+      return null
+    case 'scrollback_load':
+      return scrollback.load(args.sessionId as string)
+    case 'scrollback_delete':
+      scrollback.delete(args.sessionId as string)
+      return null
+    case 'scrollback_prune':
+      scrollback.prune(args.ids as string[])
+      return null
 
     default:
       return null
