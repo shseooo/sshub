@@ -100,6 +100,17 @@
     padding: 0;
   }
 
+  /* Electron window dragging (replaces Tauri's data-tauri-drag-region).
+     Apply .app-drag to the title-bar strip; .app-no-drag to interactive
+     children inside a drag region so they stay clickable. */
+  .app-drag {
+    -webkit-app-region: drag;
+    user-select: none;
+  }
+  .app-no-drag {
+    -webkit-app-region: no-drag;
+  }
+
   /* CRT scanlines + vignette, above everything but never interactive */
   body::after {
     content: '';

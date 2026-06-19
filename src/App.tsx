@@ -1,6 +1,5 @@
 import { useEffect } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { loadStartRoute } from './lib/startup'
 import Sidebar from './components/Sidebar'
 import TerminalHost from './components/TerminalHost'
@@ -21,15 +20,6 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Window starts hidden (tauri.conf) so the window-state plugin can restore
-  // size/position first, avoiding the launch jump. Reveal it once React has
-  // mounted. NOTE: do NOT use requestAnimationFrame here — WebKit suspends rAF
-  // while the window is hidden, so the callback would never fire and the window
-  // would stay invisible. useEffect runs regardless of paint/visibility.
-  useEffect(() => {
-    getCurrentWindow().show().catch(() => {})
-  }, [])
-
   return (
     <TerminalProvider>
       <div
@@ -46,7 +36,7 @@ function App() {
       >
         {/* Dark, draggable strip where the macOS traffic-light buttons sit
             (titleBarStyle: Overlay) — replaces the white native title bar. */}
-        <div data-tauri-drag-region className="h-7 shrink-0 bg-background" />
+        <div className="app-drag h-7 shrink-0 bg-background" />
 
         <div className="flex flex-1 overflow-hidden">
           <Sidebar />

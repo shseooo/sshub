@@ -426,6 +426,19 @@ export default function TerminalHost() {
     leaves(current.root).forEach((l) => pool.refit(l.sessionId))
   }, [tabs, activeTab, current, pool])
 
+  // On tab switch/open, focus the active tab's terminal. openTab only sets
+  // activeTab (not focusedPane), so without this a new/switched tab keeps focus
+  // on the previous tab's hidden textarea and typing lands in the wrong session.
+  useEffect(() => {
+    if (!visible || !current) return
+    const ls = leaves(current.root)
+    const target = ls.find((l) => l.sessionId === focusedPane) ?? ls[0]
+    if (!target) return
+    setFocusedPane(target.sessionId)
+    pool.focus(target.sessionId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, visible])
+
   // NOTE: no disposeAll on unmount — TerminalHost only unmounts at app teardown
   // (process exit reaps the PTYs). A cleanup here would let React StrictMode's
   // mount→cleanup→mount cycle kill+respawn every session in dev.
@@ -484,6 +497,9 @@ export default function TerminalHost() {
         const idx = Number(e.code.slice(5)) - 1
         if (tabs[idx]) {
           e.preventDefault()
+          // Commit any in-flight IME composition to the current tab before the
+          // focus moves, so a half-composed syllable isn't carried into the target.
+          ;(document.activeElement as HTMLElement | null)?.blur()
           setActiveTab(tabs[idx].id)
         }
         return
@@ -491,6 +507,7 @@ export default function TerminalHost() {
       const combo = comboFromEvent(e)
       if (combo === shortcuts.newTab) {
         e.preventDefault()
+        ;(document.activeElement as HTMLElement | null)?.blur()
         openTab(null, t('term.local'))
       } else if (combo === shortcuts.closePane) {
         if (!current) return

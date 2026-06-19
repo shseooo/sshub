@@ -24,3 +24,8 @@ dist-ssr
 *.sw?
 
 .vscode
+# electron build output
+electron/out
+
+# electron-builder output
+release

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/lib/bridge'
 import type { CreateServerDto, Server, UpdateServerDto } from '@/types/server'
 import type { CreateKeyDto, ImportKeyDto, UpdateKeyDto, SshKey } from '@/types/key'
 

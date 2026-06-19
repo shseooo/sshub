@@ -3,9 +3,16 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
+import { readFileSync } from 'node:fs'
+
+const appVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  // Relative asset paths so the built index.html works under Electron's file://.
+  base: './',
+  // Inject the package.json version so the UI never drifts from the real version.
+  define: { __APP_VERSION__: JSON.stringify(appVersion) },
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
@@ -16,21 +23,15 @@ export default defineConfig({
     exclude: ['@xterm/xterm'],
   },
   server: {
-    // Tauri expects the dev server to run on port 1420
+    // Electron's main process loads http://localhost:1420 in dev (see electron/main.ts).
     port: 1420,
     strictPort: true,
-    watch: {
-      // Tauri will not pick up file changes on new top-level directories until `tauri dev` is re-started
-      // unless you give a "fixed" list this is not a problem
-      // https://github.com/tauri-apps/tauri/issues/5262#issuecomment-1363818759
-      ignored: ['**/src-tauri/**'],
-    },
   },
   envDir: './',
   test: {
     environment: 'jsdom',
     globals: true,
     setupFiles: ['src/test/setup.ts'],
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'electron/**/*.{test,spec}.ts'],
   },
 })

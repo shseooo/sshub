@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { open, save } from '@tauri-apps/plugin-dialog'
+import { openFileDialog, saveFileDialog } from '@/lib/bridge'
 import { syncServersToConfig, syncConfigToServers, exportData, importData } from '@/lib/tauriCommands'
 import { useEffect } from 'react'
 import { serverKeys, useServers } from '@/hooks/useServers'
@@ -118,7 +118,7 @@ export default function Settings() {
     if (!exportSel) return
     const { encrypted } = exportSel
     setExportSel(null)
-    const path = await save({
+    const path = await saveFileDialog({
       title: t('settings.exportDialogTitle'),
       defaultPath: encrypted ? 'sshub-export.enc' : 'sshub-export.json',
       filters: [{ name: 'sshub', extensions: [encrypted ? 'enc' : 'json'] }],
@@ -143,10 +143,8 @@ export default function Settings() {
 
   const handleImport = async () => {
     setMessage(null)
-    const path = await open({
+    const path = await openFileDialog({
       title: t('settings.importDialogTitle'),
-      multiple: false,
-      directory: false,
       filters: [{ name: 'sshub', extensions: ['json', 'enc'] }],
     })
     if (typeof path !== 'string') return
@@ -482,7 +480,8 @@ export default function Settings() {
           <SectionTitle>System Info</SectionTitle>
           <div className="space-y-1.5 text-xs text-muted-foreground">
             <p>
-              <span className="text-phosphor/70 mr-2">ver</span>0.1.5
+              <span className="text-phosphor/70 mr-2">ver</span>
+              {__APP_VERSION__}
             </p>
             <p>
               <span className="text-phosphor/70 mr-2">data</span>

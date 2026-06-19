@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import { open } from '@tauri-apps/plugin-dialog'
-import { homeDir } from '@tauri-apps/api/path'
+import { openFileDialog, homeDir } from '@/lib/bridge'
 import { Key, Plus, Trash2, Eye, EyeOff, Copy, X, FolderOpen, FileWarning, KeyRound, Pencil } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCreateSshKey, useDeleteSshKey, useImportSshKey, useUpdateSshKey, useSshKeys, sshKeyKeys } from '@/hooks/useKeys'
@@ -191,12 +190,7 @@ function ImportKeyDialog({ onClose }: { onClose: () => void }) {
       defaultPath = undefined
     }
 
-    const path = await open({
-      multiple: false,
-      directory: false,
-      title: t('keys.dialogPickTitle'),
-      defaultPath,
-    })
+    const path = await openFileDialog({ title: t('keys.dialogPickTitle'), defaultPath })
     if (typeof path !== 'string') return
 
     try {
@@ -390,7 +384,7 @@ function EditKeyDialog({ keyData, onClose }: { keyData: SshKey; onClose: () => v
     } catch {
       defaultPath = undefined
     }
-    const path = await open({ multiple: false, directory: false, title: t('keys.dialogPickTitle'), defaultPath })
+    const path = await openFileDialog({ title: t('keys.dialogPickTitle'), defaultPath })
     if (typeof path !== 'string') return
     try {
       const loaded = await loadKeyFile(path)

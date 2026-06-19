@@ -1,9 +1,8 @@
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { listen } from '@tauri-apps/api/event'
+import { listen } from '@/lib/bridge'
 import { startTerminalSession, resizeTerminal, closeTerminal } from '@/lib/tauriCommands'
-import { shouldConsumeNavKey } from '@/lib/ime'
 import type { Theme } from '@/lib/theme'
 
 // Live config the host mutates each render so the pool always routes input,
@@ -24,6 +23,10 @@ interface Entry {
   disps: { dispose(): void }[]
   unlisten: (() => void)[]
   disposed: boolean
+  /** Swallow one stray non-composing input right after this terminal gains focus
+   *  (Chromium re-inserts a just-committed IME syllable into the newly focused
+   *  field on tab switch — see attachPhantomGuard). */
+  ignorePhantom: boolean
 }
 
 const FONT = '"IBM Plex Mono", Menlo, Monaco, "Courier New", monospace'
@@ -47,6 +50,7 @@ function xtermTheme(t: Theme) {
  */
 export class TerminalPool {
   private entries = new Map<string, Entry>()
+  private focused: string | null = null
   cfg: PoolConfig
 
   constructor(cfg: PoolConfig) {
@@ -67,18 +71,6 @@ export class TerminalPool {
     term.loadAddon(new WebLinksAddon())
     term.open(container)
 
-    // 한글/CJK 조합 보호 (VS Code 와 동일한 전략). ⌘← 같은 모디파이어+방향키는
-    // xterm 이 소비하지 않아 브라우저 기본 동작이 숨겨진 textarea 캐럿을 옮기고,
-    // 이로 인해 IME 조합 오프셋이 어긋나 마지막 글자가 중복된다(xterm.js#6012).
-    // xterm 처리 전에 가로채 preventDefault 하면 캐럿이 움직이지 않아 조합이 보존된다.
-    term.attachCustomKeyEventHandler((e) => {
-      if (shouldConsumeNavKey(e)) {
-        e.preventDefault()
-        return false
-      }
-      return true
-    })
-
     const d1 = term.onData((data) => this.cfg.onInput(sessionId, data))
     const d2 = term.onResize(({ cols, rows }) => {
       resizeTerminal(sessionId, cols, rows).catch(() => {})
@@ -97,8 +89,23 @@ export class TerminalPool {
       disps: [d1, d2],
       unlisten: [],
       disposed: false,
+      ignorePhantom: false,
     }
     this.entries.set(sessionId, entry)
+
+    // On tab switch, Chromium re-inserts a just-committed IME syllable into the
+    // newly focused terminal as a stray non-composing `input`. Swallow that one
+    // event (capture phase, before xterm's own input handler) so the syllable
+    // stays only in the tab it was composed in.
+    const phantomGuard = (ev: Event) => {
+      if (ev.target !== term.textarea || !entry.ignorePhantom) return
+      entry.ignorePhantom = false
+      if ((ev as InputEvent).isComposing) return
+      ev.stopImmediatePropagation()
+      if (term.textarea) term.textarea.value = ''
+    }
+    container.addEventListener('input', phantomGuard, true)
+    entry.disps.push({ dispose: () => container.removeEventListener('input', phantomGuard, true) })
 
     ;(async () => {
       const unOut = await listen<string>(`terminal-output-${sessionId}`, (e) => term.write(e.payload))
@@ -143,7 +150,23 @@ export class TerminalPool {
   }
 
   focus(sessionId: string) {
-    this.entries.get(sessionId)?.term.focus()
+    const e = this.entries.get(sessionId)
+    if (!e) return
+    // Commit any in-flight IME composition on the previously focused terminal
+    // before moving focus, so its marked text (e.g. a half-composed Hangul
+    // syllable) commits to its own PTY instead of being carried into the new one.
+    if (this.focused && this.focused !== sessionId) {
+      this.entries.get(this.focused)?.term.textarea?.blur()
+      // Arm the phantom-input guard: Chromium may push a just-committed IME
+      // syllable into this freshly focused terminal. Disarm next tick so it
+      // never swallows real typing.
+      e.ignorePhantom = true
+      setTimeout(() => {
+        e.ignorePhantom = false
+      }, 0)
+    }
+    this.focused = sessionId
+    e.term.focus()
   }
 
   setTheme(theme: Theme) {
