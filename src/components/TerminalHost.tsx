@@ -378,6 +378,10 @@ export default function TerminalHost() {
   const [broadcast, setBroadcast] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  // The pane search is locked to (captured when the bar opens) so it doesn't
+  // drift if focus moves to another pane mid-search.
+  const [searchPane, setSearchPane] = useState<string | null>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const { theme, setTheme } = useTheme()
 
@@ -391,16 +395,46 @@ export default function TerminalHost() {
   })()
 
   const runSearch = (dir: 'next' | 'prev', q = searchQuery) => {
-    if (!searchTarget || !q) return
-    if (dir === 'next') pool.searchNext(searchTarget, q)
-    else pool.searchPrevious(searchTarget, q)
+    if (!searchPane || !q) return
+    if (dir === 'next') pool.searchNext(searchPane, q)
+    else pool.searchPrevious(searchPane, q)
   }
 
   const closeSearch = () => {
-    if (searchTarget) pool.clearSearch(searchTarget)
+    pool.clearAllSearch() // active pane may have changed mid-search → clear every pane
     setSearchOpen(false)
-    if (searchTarget) pool.focus(searchTarget)
+    const pane = searchPane
+    setSearchPane(null)
+    if (pane) pool.focus(pane)
   }
+
+  // Cmd+F opens the search bar and (re)targets the currently active pane — so
+  // after a split (focus moved to the new pane) pressing Cmd+F searches it.
+  // While the bar stays open it's locked to that pane (focus drift won't move
+  // it); pressing Cmd+F again retargets to whatever is active now.
+  const openSearch = () => {
+    const target = searchTarget
+    if (searchPane && searchPane !== target) pool.clearSearch(searchPane) // drop old pane's highlights
+    setSearchPane(target)
+    setSearchOpen(true)
+    if (target && searchQuery) pool.searchNext(target, searchQuery) // re-run on the new pane
+    setTimeout(() => {
+      searchInputRef.current?.focus()
+      searchInputRef.current?.select()
+    }, 0)
+  }
+
+  // Auto-close search if its locked pane leaves the view (pane closed / tab switched).
+  useEffect(() => {
+    if (!searchOpen) return
+    const stillThere = !!current && leaves(current.root).some((l) => l.sessionId === searchPane)
+    if (!stillThere) {
+      pool.clearAllSearch()
+      setSearchOpen(false)
+      setSearchPane(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, tabs, searchOpen, searchPane])
 
   // Persistent xterm pool: terminals live here, not in the tab subtree, so a
   // session (PTY + scrollback) survives being moved between tabs (merge/detach).
@@ -529,7 +563,7 @@ export default function TerminalHost() {
       // In-terminal search: Cmd/Ctrl+F (fixed)
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.code === 'KeyF') {
         e.preventDefault()
-        setSearchOpen(true)
+        openSearch()
         return
       }
       // Tab switch: Cmd/Ctrl + 1..9 (fixed — a 1..9 family, not rebindable)
@@ -860,6 +894,7 @@ export default function TerminalHost() {
         {searchOpen && (
           <div className="absolute top-2 right-3 z-50 flex items-center gap-1 bg-popover border border-border shadow-lg px-2 py-1 crt-in">
             <input
+              ref={searchInputRef}
               autoFocus
               value={searchQuery}
               placeholder={t('term.searchPlaceholder')}

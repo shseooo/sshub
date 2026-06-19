@@ -311,6 +311,12 @@ export class TerminalPool {
     this.entries.get(sessionId)?.search.clearDecorations()
   }
 
+  /** Clear search highlights on every terminal (the active pane can change
+   *  mid-search in a split tab, so closing must clear all, not just one). */
+  clearAllSearch() {
+    for (const e of this.entries.values()) e.search.clearDecorations()
+  }
+
   /** Persist every live terminal's scrollback now (best-effort, on app quit). */
   flushScrollback() {
     for (const [id, e] of this.entries) {
