@@ -4,7 +4,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { listen, loadScrollback, saveScrollback, deleteScrollback } from '@/lib/bridge'
+import { listen, loadScrollback, saveScrollback, deleteScrollback, openExternal } from '@/lib/bridge'
 import { startTerminalSession, resizeTerminal, closeTerminal } from '@/lib/tauriCommands'
 import type { Theme } from '@/lib/theme'
 
@@ -90,7 +90,13 @@ export class TerminalPool {
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
-    term.loadAddon(new WebLinksAddon())
+    // Cmd/Ctrl+click a URL opens it in the default browser (a plain click does
+    // nothing, to avoid accidental opens from terminal output).
+    term.loadAddon(
+      new WebLinksAddon((event, uri) => {
+        if (event.metaKey || event.ctrlKey) openExternal(uri).catch(() => {})
+      })
+    )
     const serialize = new SerializeAddon()
     term.loadAddon(serialize)
     const search = new SearchAddon()

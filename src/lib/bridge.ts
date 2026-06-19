@@ -59,6 +59,11 @@ export function homeDir(): Promise<string> {
   return api().invoke('home_dir') as Promise<string>
 }
 
+/** Open an http(s) URL in the OS default browser. */
+export function openExternal(url: string): Promise<void> {
+  return api().invoke('open_external', { url }) as Promise<void>
+}
+
 // ---- terminal scrollback (output history, restored across restarts) ----
 
 export function saveScrollback(sessionId: string, data: string): Promise<void> {

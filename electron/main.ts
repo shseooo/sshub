@@ -4,7 +4,7 @@
 //
 // Migration status: servers + store done. Keys/ssh_config/backup still stubbed.
 
-import { app, BrowserWindow, dialog, ipcMain, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { existsSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
@@ -188,6 +188,13 @@ ipcMain.handle('invoke', async (e, cmd: string, args: Record<string, unknown> = 
       return keys.loadKeyFile(args.path as string)
     case 'derive_public_key_from_pem':
       return keys.derivePublicKeyFromPem(keyCtx, args.pem as string, args.passphrase as string | undefined)
+
+    // ---- open a URL in the default browser (terminal link Cmd+click) ----
+    case 'open_external': {
+      const url = String(args.url ?? '')
+      if (/^https?:\/\//i.test(url)) await shell.openExternal(url)
+      return null
+    }
 
     // ---- native dialogs / paths ----
     case 'home_dir':
