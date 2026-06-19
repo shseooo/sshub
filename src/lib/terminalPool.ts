@@ -40,12 +40,14 @@ interface Entry {
   saveTimer: ReturnType<typeof setTimeout> | null
 }
 
-// Highlight colors for in-terminal search (phosphor accent for the active match).
+// Search highlight colors: all matches get a faint phosphor-green wash; the
+// active (focused) match stands out in amber with a border.
 const SEARCH_DECORATIONS = {
-  matchBackground: '#3dff8855',
+  matchBackground: '#3dff8833',
   matchOverviewRuler: '#3dff88',
-  activeMatchBackground: '#3dff88',
-  activeMatchColorOverviewRuler: '#ffffff',
+  activeMatchBackground: '#ffae57',
+  activeMatchBorder: '#ffd9a0',
+  activeMatchColorOverviewRuler: '#ffae57',
 }
 
 const FONT = '"IBM Plex Mono", Menlo, Monaco, "Courier New", monospace'
@@ -84,6 +86,7 @@ export class TerminalPool {
       fontSize: this.cfg.theme.termFontSize,
       fontFamily: FONT,
       theme: xtermTheme(this.cfg.theme),
+      allowProposedApi: true, // search decorations use xterm's proposed decoration API
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
