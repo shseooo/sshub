@@ -64,6 +64,11 @@ export function openExternal(url: string): Promise<void> {
   return api().invoke('open_external', { url }) as Promise<void>
 }
 
+/** Reveal a local file path in Finder (no-op if it doesn't exist). */
+export function revealPath(path: string): Promise<void> {
+  return api().invoke('reveal_path', { path }) as Promise<void>
+}
+
 // ---- terminal scrollback (output history, restored across restarts) ----
 
 export function saveScrollback(sessionId: string, data: string): Promise<void> {

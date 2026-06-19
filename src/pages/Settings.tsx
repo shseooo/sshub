@@ -189,7 +189,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="p-6 max-w-2xl">
+    <div className="p-6 max-w-5xl">
       <div className="mb-6 crt-in">
         <p className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground mb-1">
           ~/settings
@@ -199,7 +199,10 @@ export default function Settings() {
         </h1>
       </div>
 
-      <div className="space-y-6">
+      {/* 1 column when narrow; 2 from lg (≥1024px). CSS multi-column packs cards
+          by height (no ragged grid gaps); break-inside-avoid keeps each intact.
+          Order is column-major: top→bottom of the left column, then the right. */}
+      <div className="columns-1 lg:columns-2 gap-6 [&>div]:mb-6 [&>div]:break-inside-avoid">
         <div className="bg-card border border-border p-5 crt-in" style={{ animationDelay: '50ms' }}>
           <SectionTitle>SSH Config Sync</SectionTitle>
           <p className="text-xs text-muted-foreground mb-4">{t('settings.syncDesc')}</p>

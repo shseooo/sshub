@@ -195,6 +195,12 @@ ipcMain.handle('invoke', async (e, cmd: string, args: Record<string, unknown> = 
       if (/^https?:\/\//i.test(url)) await shell.openExternal(url)
       return null
     }
+    case 'reveal_path': {
+      const p = String(args.path ?? '')
+      const resolved = p.startsWith('~/') ? join(homedir(), p.slice(2)) : p
+      if (existsSync(resolved)) shell.showItemInFolder(resolved)
+      return null
+    }
 
     // ---- native dialogs / paths ----
     case 'home_dir':

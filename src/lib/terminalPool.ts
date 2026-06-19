@@ -4,7 +4,8 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { listen, loadScrollback, saveScrollback, deleteScrollback, openExternal } from '@/lib/bridge'
+import { listen, loadScrollback, saveScrollback, deleteScrollback, openExternal, revealPath } from '@/lib/bridge'
+import { findFilePaths } from '@/lib/filePaths'
 import { startTerminalSession, resizeTerminal, closeTerminal } from '@/lib/tauriCommands'
 import type { Theme } from '@/lib/theme'
 
@@ -150,6 +151,29 @@ export class TerminalPool {
     }
     container.addEventListener('input', phantomGuard, true)
     entry.disps.push({ dispose: () => container.removeEventListener('input', phantomGuard, true) })
+
+    // Local sessions only: make absolute file paths Cmd/Ctrl+clickable → reveal in
+    // Finder. Skipped for SSH sessions (those paths are remote, not local files).
+    if (serverId == null) {
+      entry.disps.push(
+        term.registerLinkProvider({
+          provideLinks(y, callback) {
+            const line = term.buffer.active.getLine(y - 1)?.translateToString(true) ?? ''
+            const matches = findFilePaths(line)
+            if (!matches.length) return callback(undefined)
+            callback(
+              matches.map((mt) => ({
+                text: mt.text,
+                range: { start: { x: mt.start + 1, y }, end: { x: mt.end, y } },
+                activate: (event: MouseEvent) => {
+                  if (event.metaKey || event.ctrlKey) revealPath(mt.text).catch(() => {})
+                },
+              }))
+            )
+          },
+        })
+      )
+    }
 
     // Debounced persist of the rendered scrollback (capped to N lines).
     const scheduleSave = () => {
