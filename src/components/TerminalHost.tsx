@@ -561,11 +561,11 @@ export default function TerminalHost() {
       } else if (combo === shortcuts.splitRight) {
         if (!current) return
         e.preventDefault()
-        splitActive('row', null, t('term.local'), focusedPane)
+        setFocusedPane(splitActive('row', null, t('term.local'), focusedPane))
       } else if (combo === shortcuts.splitDown) {
         if (!current) return
         e.preventDefault()
-        splitActive('column', null, t('term.local'), focusedPane)
+        setFocusedPane(splitActive('column', null, t('term.local'), focusedPane))
       } else if (combo === shortcuts.broadcast) {
         e.preventDefault()
         setBroadcast((b) => !b)
@@ -618,7 +618,8 @@ export default function TerminalHost() {
   }
   const pick = (serverId: number | null) => {
     const label = labelFor(serverId)
-    if (pickerMode === 'row' || pickerMode === 'column') splitActive(pickerMode, serverId, label, focusedPane)
+    if (pickerMode === 'row' || pickerMode === 'column')
+      setFocusedPane(splitActive(pickerMode, serverId, label, focusedPane))
     else openTab(serverId, label)
     setPickerMode(null)
   }

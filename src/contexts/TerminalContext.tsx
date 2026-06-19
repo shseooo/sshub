@@ -142,7 +142,7 @@ interface TerminalContextValue {
   openTab: (serverId: number | null, label: string) => void
   closeTab: (tabId: string) => void
   /** Split the focused pane of the active tab (or its first leaf). */
-  splitActive: (direction: 'row' | 'column', serverId: number | null, label: string, focusedSession: string | null) => void
+  splitActive: (direction: 'row' | 'column', serverId: number | null, label: string, focusedSession: string | null) => string
   /** Close one pane; closes the whole tab when it was the last pane. */
   closePane: (tabId: string, sessionId: string) => void
   reconnectTab: (tabId: string) => void
@@ -197,7 +197,15 @@ export function TerminalProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const splitActive = useCallback(
-    (direction: 'row' | 'column', serverId: number | null, label: string, focusedSession: string | null) => {
+    (
+      direction: 'row' | 'column',
+      serverId: number | null,
+      label: string,
+      focusedSession: string | null
+    ): string => {
+      // Create the new pane up front so the caller can focus it (highlight +
+      // cursor both land on the new pane, not the one it was split from).
+      const addition = newLeaf(serverId, label)
       setTabs((prev) =>
         prev.map((t) => {
           if (t.id !== activeTab) return t
@@ -205,9 +213,10 @@ export function TerminalProvider({ children }: { children: React.ReactNode }) {
           const all = leaves(t.root)
           const target = all.find((l) => l.sessionId === focusedSession) ?? all[0]
           if (!target) return t
-          return { ...t, root: splitAt(t.root, target.sessionId, direction, newLeaf(serverId, label)) }
+          return { ...t, root: splitAt(t.root, target.sessionId, direction, addition) }
         })
       )
+      return addition.sessionId
     },
     [activeTab]
   )
