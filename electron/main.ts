@@ -16,6 +16,7 @@ import * as keys from './keys'
 import { syncServersToConfig, syncConfigToServers } from './sshConfigFile'
 import * as backup from './backup'
 import { ScrollbackStore } from './scrollbackStore'
+import { loadWindowBounds, saveWindowBounds } from './lib/windowState'
 import type { CreateServerDto, UpdateServerDto } from '@/types/server'
 import type { CreateKeyDto, ImportKeyDto, UpdateKeyDto } from '@/types/key'
 
@@ -26,6 +27,7 @@ const keysDir = join(appDataDir, 'ssh_keys')
 const store = new Store(join(appDataDir, 'sshub.json'))
 const keyCtx: keys.KeyCtx = { store, keysDir }
 const scrollback = new ScrollbackStore(join(appDataDir, 'sshub_scrollback'))
+const windowBoundsPath = join(appDataDir, 'sshub_window.json')
 
 const sessions = new Map<string, pty.IPty>()
 
@@ -41,9 +43,11 @@ function removeServerPem(id: number): void {
 }
 
 function createWindow() {
+  // Restore the size/position from the last session (centered by the OS on a
+  // fresh install or if the saved geometry is unusable).
+  const bounds = loadWindowBounds(windowBoundsPath, { width: 1000, height: 700 })
   const win = new BrowserWindow({
-    width: 1000,
-    height: 700,
+    ...bounds,
     title: 'sshub',
     // Transparent backing so the macOS vibrancy material shows through wherever
     // the UI is translucent (the theme bakes alpha into --background). An opaque
@@ -56,6 +60,23 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  })
+
+  // Persist geometry on resize/move (debounced) and once more on close, so the
+  // next launch reopens where the user left it.
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+  const persist = () => {
+    if (!win.isDestroyed()) saveWindowBounds(windowBoundsPath, win.getBounds())
+  }
+  const schedule = () => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(persist, 400)
+  }
+  win.on('resize', schedule)
+  win.on('move', schedule)
+  win.on('close', () => {
+    if (saveTimer) clearTimeout(saveTimer)
+    persist()
   })
 
   if (app.isPackaged) {
