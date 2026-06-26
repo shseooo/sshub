@@ -276,9 +276,19 @@ ipcMain.handle('invoke', async (e, cmd: string, args: Record<string, unknown> = 
       return backup.importData({ store, keysDir }, args.path as string, args.passphrase as string | null)
 
     // ---- terminal scrollback persistence ----
-    case 'scrollback_save':
-      scrollback.save(args.sessionId as string, args.data as string)
+    case 'scrollback_save': {
+      const sid = args.sessionId as string
+      scrollback.save(sid, args.data as string)
+      // Snapshot the local session's cwd on the same (debounced) beat as scrollback
+      // — i.e. shortly after each command settles — so the last directory survives
+      // no matter how the session ends (shell exit, pane close, quit, or crash).
+      const s = sessions.get(sid)
+      if (s && s.serverId == null) {
+        const cwd = readPidCwd(s.pty.pid)
+        if (cwd) cwdStore.set(sid, cwd)
+      }
       return null
+    }
     case 'scrollback_load':
       return scrollback.load(args.sessionId as string)
     case 'scrollback_delete':

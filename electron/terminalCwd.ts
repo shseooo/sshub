@@ -18,8 +18,10 @@ export function readPidCwd(pid: number): string | null {
       return readlinkSync(`/proc/${pid}/cwd`)
     }
     if (process.platform === 'darwin') {
-      // `lsof -Fn -d cwd` prints the cwd path on a line prefixed with 'n'.
-      const out = execFileSync('lsof', ['-a', '-d', 'cwd', '-Fn', '-p', String(pid)], {
+      // `lsof -Fn -d cwd` prints the cwd path on a line prefixed with 'n'. Use the
+      // absolute path: a GUI-launched (Finder/dock) app has a minimal PATH that may
+      // not include /usr/sbin.
+      const out = execFileSync('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-Fn', '-p', String(pid)], {
         encoding: 'utf8',
       })
       const line = out.split('\n').find((l) => l.startsWith('n'))
