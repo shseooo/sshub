@@ -6,6 +6,7 @@ import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { listen, loadScrollback, saveScrollback, deleteScrollback, openExternal, revealPath } from '@/lib/bridge'
 import { findFilePaths } from '@/lib/filePaths'
+import { trimSelectionTrailing } from '@/lib/selection'
 import { startTerminalSession, resizeTerminal, closeTerminal } from '@/lib/tauriCommands'
 import type { Theme } from '@/lib/theme'
 
@@ -180,6 +181,22 @@ export class TerminalPool {
     }
     container.addEventListener('input', phantomGuard, true)
     entry.disps.push({ dispose: () => container.removeEventListener('input', phantomGuard, true) })
+
+    // xterm fills its cell-based selection out to the rightmost column, so copying
+    // box-drawing/TUI output drags trailing spaces onto every line. Match VS Code:
+    // intercept copy (capture phase, before xterm's own copy handler) and write the
+    // trimmed selection instead. Only act when trimming actually changes something.
+    const trimCopy = (ev: ClipboardEvent) => {
+      if (!term.hasSelection()) return
+      const sel = term.getSelection()
+      const trimmed = trimSelectionTrailing(sel)
+      if (trimmed === sel) return
+      ev.clipboardData?.setData('text/plain', trimmed)
+      ev.preventDefault()
+      ev.stopImmediatePropagation()
+    }
+    container.addEventListener('copy', trimCopy, true)
+    entry.disps.push({ dispose: () => container.removeEventListener('copy', trimCopy, true) })
 
     // Local sessions only: make absolute file paths Cmd/Ctrl+clickable → reveal in
     // Finder. Skipped for SSH sessions (those paths are remote, not local files).
