@@ -16,6 +16,7 @@ import * as keys from './keys'
 import { syncServersToConfig, syncConfigToServers } from './sshConfigFile'
 import * as backup from './backup'
 import { ScrollbackStore } from './scrollbackStore'
+import { TerminalCwdStore, readPidCwd } from './terminalCwd'
 import { loadWindowBounds, saveWindowBounds } from './lib/windowState'
 import type { CreateServerDto, UpdateServerDto } from '@/types/server'
 import type { CreateKeyDto, ImportKeyDto, UpdateKeyDto } from '@/types/key'
@@ -27,9 +28,19 @@ const keysDir = join(appDataDir, 'ssh_keys')
 const store = new Store(join(appDataDir, 'sshub.json'))
 const keyCtx: keys.KeyCtx = { store, keysDir }
 const scrollback = new ScrollbackStore(join(appDataDir, 'sshub_scrollback'))
+const cwdStore = new TerminalCwdStore(join(appDataDir, 'sshub_terminal_cwd.json'))
 const windowBoundsPath = join(appDataDir, 'sshub_window.json')
 
-const sessions = new Map<string, pty.IPty>()
+const sessions = new Map<string, { pty: pty.IPty; serverId: number | null }>()
+
+/** Snapshot each local session's cwd so the next launch reopens it there. */
+function captureCwds() {
+  for (const [id, s] of sessions) {
+    if (s.serverId != null) continue // SSH cwd is remote — not ours to restore
+    const cwd = readPidCwd(s.pty.pid)
+    if (cwd) cwdStore.set(id, cwd)
+  }
+}
 
 // Server PEMs (for `pem` auth) live in 0600 files keyed by server id — never in
 // the JSON store. Mirrors the Tauri write_server_pem / remove_server_pem.
@@ -120,11 +131,14 @@ function resolveCommand(serverId: number | null): {
 
 function startSession(sender: WebContents, sessionId: string, serverId: number | null) {
   const { file, args, banner } = resolveCommand(serverId)
+  // Local sessions reopen in their last working directory; SSH starts at the
+  // remote home as before. Falls back to home if the saved dir is gone.
+  const cwd = (serverId == null && cwdStore.get(sessionId)) || homedir()
   const p = pty.spawn(file, args, {
     name: 'xterm-256color',
     cols: 80,
     rows: 24,
-    cwd: homedir(),
+    cwd,
     env: process.env as Record<string, string>,
   })
   if (banner && !sender.isDestroyed()) sender.send(`terminal-output-${sessionId}`, banner)
@@ -135,7 +149,7 @@ function startSession(sender: WebContents, sessionId: string, serverId: number |
     if (!sender.isDestroyed()) sender.send(`terminal-closed-${sessionId}`, null)
     sessions.delete(sessionId)
   })
-  sessions.set(sessionId, p)
+  sessions.set(sessionId, { pty: p, serverId })
 }
 
 ipcMain.handle('invoke', async (e, cmd: string, args: Record<string, unknown> = {}) => {
@@ -171,15 +185,15 @@ ipcMain.handle('invoke', async (e, cmd: string, args: Record<string, unknown> = 
       startSession(e.sender, args.sessionId as string, (args.serverId as number | null) ?? null)
       return null
     case 'write_terminal':
-      sessions.get(args.sessionId as string)?.write(args.data as string)
+      sessions.get(args.sessionId as string)?.pty.write(args.data as string)
       return null
     case 'resize_terminal':
-      sessions.get(args.sessionId as string)?.resize(args.cols as number, args.rows as number)
+      sessions.get(args.sessionId as string)?.pty.resize(args.cols as number, args.rows as number)
       return null
     case 'close_terminal': {
-      const p = sessions.get(args.sessionId as string)
-      if (p) {
-        p.kill()
+      const s = sessions.get(args.sessionId as string)
+      if (s) {
+        s.pty.kill()
         sessions.delete(args.sessionId as string)
       }
       return null
@@ -269,9 +283,11 @@ ipcMain.handle('invoke', async (e, cmd: string, args: Record<string, unknown> = 
       return scrollback.load(args.sessionId as string)
     case 'scrollback_delete':
       scrollback.delete(args.sessionId as string)
+      cwdStore.delete(args.sessionId as string)
       return null
     case 'scrollback_prune':
       scrollback.prune(args.ids as string[])
+      cwdStore.prune(args.ids as string[])
       return null
 
     default:
@@ -282,6 +298,7 @@ ipcMain.handle('invoke', async (e, cmd: string, args: Record<string, unknown> = 
 app.whenReady().then(() => {
   mkdirSync(keysDir, { recursive: true })
   store.load()
+  cwdStore.load()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -289,7 +306,8 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  for (const p of sessions.values()) p.kill()
+  captureCwds() // snapshot local cwds before the shells die so reopen restores them
+  for (const s of sessions.values()) s.pty.kill()
   sessions.clear()
   if (process.platform !== 'darwin') app.quit()
 })
