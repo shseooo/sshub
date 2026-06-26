@@ -53,6 +53,20 @@ const SEARCH_DECORATIONS = {
 
 const FONT = '"IBM Plex Mono", Menlo, Monaco, "Courier New", monospace'
 
+// IBM Plex Mono arrives asynchronously (Google Fonts @import, display=swap). The
+// WebGL/canvas renderer bakes glyphs into a texture atlas at open() time; if the
+// web font has not loaded yet it bakes the fallback font's metrics and never
+// notices the later font swap, so text stays garbled until a resize rebuilds the
+// atlas. Resolve once the real font is ready so each terminal can rebuild itself.
+const fontReady: Promise<void> = (async () => {
+  try {
+    await document.fonts.load('16px "IBM Plex Mono"')
+    await document.fonts.ready
+  } catch {
+    /* Font Loading API unavailable → nothing to wait for */
+  }
+})()
+
 function xtermTheme(t: Theme) {
   return {
     background: t.termBg,
@@ -137,6 +151,21 @@ export class TerminalPool {
       saveTimer: null,
     }
     this.entries.set(sessionId, entry)
+
+    // When the web font finally lands, drop the atlas that was baked with the
+    // fallback font and remeasure, so the first render after the swap is crisp
+    // without the user having to resize the window. Resolves immediately for
+    // every terminal created after the font is already cached.
+    fontReady.then(() => {
+      if (entry.disposed) return
+      try {
+        term.clearTextureAtlas()
+        if (container.clientWidth > 0 && container.clientHeight > 0) fit.fit()
+        term.refresh(0, term.rows - 1)
+      } catch {
+        /* terminal torn down between scheduling and running this callback */
+      }
+    })
 
     // On tab switch, Chromium re-inserts a just-committed IME syllable into the
     // newly focused terminal as a stray non-composing `input`. Swallow that one
