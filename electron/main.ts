@@ -1,10 +1,8 @@
-// Electron main process. Replaces the Tauri Rust backend. IPC commands mirror
-// the Tauri command names so the React frontend (via src/lib/bridge.ts) is
-// unchanged. Terminal uses node-pty; persistent data uses the JSON Store.
-//
-// Migration status: servers + store done. Keys/ssh_config/backup still stubbed.
+// Electron main process. Dispatches a single `invoke` IPC channel (from
+// src/lib/bridge.ts) to backend commands. Terminal uses node-pty; persistent
+// data uses the JSON Store.
 
-import { app, BrowserWindow, dialog, ipcMain, shell, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, session, shell, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { existsSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
@@ -21,8 +19,8 @@ import { loadWindowBounds, saveWindowBounds } from './lib/windowState'
 import type { CreateServerDto, UpdateServerDto } from '@/types/server'
 import type { CreateKeyDto, ImportKeyDto, UpdateKeyDto } from '@/types/key'
 
-// Same path the Tauri build used (~/Library/Application Support/sshub.json on
-// macOS) so existing servers/keys carry over. getPath('appData') is that base dir.
+// ~/Library/Application Support/sshub.json on macOS.
+// getPath('appData') is that base dir.
 const appDataDir = app.getPath('appData')
 const keysDir = join(appDataDir, 'ssh_keys')
 const store = new Store(join(appDataDir, 'sshub.json'))
@@ -34,16 +32,24 @@ const windowBoundsPath = join(appDataDir, 'sshub_window.json')
 const sessions = new Map<string, { pty: pty.IPty; serverId: number | null }>()
 
 /** Snapshot each local session's cwd so the next launch reopens it there. */
-function captureCwds() {
-  for (const [id, s] of sessions) {
-    if (s.serverId != null) continue // SSH cwd is remote — not ours to restore
-    const cwd = readPidCwd(s.pty.pid)
-    if (cwd) cwdStore.set(id, cwd)
-  }
+async function captureCwds() {
+  await Promise.all(
+    [...sessions].map(async ([id, s]) => {
+      if (s.serverId != null) return // SSH cwd is remote — not ours to restore
+      const cwd = await readPidCwd(s.pty.pid)
+      if (cwd) cwdStore.set(id, cwd)
+    })
+  )
+}
+
+/** Kill every live PTY and clear the session map. */
+function killAllSessions() {
+  for (const s of sessions.values()) s.pty.kill()
+  sessions.clear()
 }
 
 // Server PEMs (for `pem` auth) live in 0600 files keyed by server id — never in
-// the JSON store. Mirrors the Tauri write_server_pem / remove_server_pem.
+// the JSON store.
 function writeServerPem(id: number, pem: string): void {
   const p = join(keysDir, serverPemFileName(id))
   writeFileSync(p, pem, { mode: 0o600 })
@@ -70,8 +76,33 @@ function createWindow() {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
     },
   })
+
+  // The renderer never legitimately opens new windows or navigates away from the
+  // app itself — external links go through the `open_external` IPC + shell. Deny
+  // both so a renderer compromise can't pivot to arbitrary pages that would still
+  // hold our IPC surface.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  win.webContents.on('will-navigate', (e, url) => {
+    const devUrl = process.env.ELECTRON_RENDERER_URL || 'http://localhost:1420'
+    if (!app.isPackaged && url.startsWith(devUrl)) return // allow HMR full reloads in dev
+    e.preventDefault()
+  })
+
+  // A full reload (⌘R) or renderer crash re-mounts the whole tree, which respawns
+  // every terminal under the same session ids. Kill the old PTYs so they don't
+  // linger as orphans (SSH sessions especially keep the remote connection open).
+  // SPA route changes are same-document navigations and are left untouched.
+  win.webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) killAllSessions()
+  })
+  win.webContents.on('render-process-gone', () => killAllSessions())
 
   // Persist geometry on resize/move (debounced) and once more on close, so the
   // next launch reopens where the user left it.
@@ -130,6 +161,13 @@ function resolveCommand(serverId: number | null): {
 }
 
 function startSession(sender: WebContents, sessionId: string, serverId: number | null) {
+  // Never leak a PTY by overwriting a live session with the same id — kill the
+  // previous one first (e.g. a reload that respawns before cleanup ran).
+  const existing = sessions.get(sessionId)
+  if (existing) {
+    existing.pty.kill()
+    sessions.delete(sessionId)
+  }
   const { file, args, banner } = resolveCommand(serverId)
   // Local sessions reopen in their last working directory; SSH starts at the
   // remote home as before. Falls back to home if the saved dir is gone.
@@ -284,7 +322,7 @@ ipcMain.handle('invoke', async (e, cmd: string, args: Record<string, unknown> = 
       // no matter how the session ends (shell exit, pane close, quit, or crash).
       const s = sessions.get(sid)
       if (s && s.serverId == null) {
-        const cwd = readPidCwd(s.pty.pid)
+        const cwd = await readPidCwd(s.pty.pid)
         if (cwd) cwdStore.set(sid, cwd)
       }
       return null
@@ -305,7 +343,48 @@ ipcMain.handle('invoke', async (e, cmd: string, args: Record<string, unknown> = 
   }
 })
 
+/**
+ * Content-Security-Policy for the renderer. We load only bundled assets plus the
+ * Google Fonts stylesheet/webfonts, so lock everything else down; this is the
+ * backstop that keeps a renderer/XSS compromise away from the IPC surface.
+ * Dev additionally needs inline/eval scripts and the localhost HMR socket.
+ */
+function contentSecurityPolicy(): string {
+  const fontCss = 'https://fonts.googleapis.com'
+  const fontFiles = 'https://fonts.gstatic.com'
+  if (app.isPackaged) {
+    return [
+      "default-src 'self'",
+      "script-src 'self'",
+      `style-src 'self' 'unsafe-inline' ${fontCss}`,
+      `font-src 'self' data: ${fontFiles}`,
+      "img-src 'self' data:",
+      "connect-src 'self'",
+      "object-src 'none'",
+      "base-uri 'none'",
+      "frame-src 'none'",
+    ].join('; ')
+  }
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    `style-src 'self' 'unsafe-inline' ${fontCss}`,
+    `font-src 'self' data: ${fontFiles}`,
+    "img-src 'self' data:",
+    `connect-src 'self' ws://localhost:* http://localhost:* ${fontCss} ${fontFiles}`,
+    "object-src 'none'",
+  ].join('; ')
+}
+
 app.whenReady().then(() => {
+  session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
+    cb({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [contentSecurityPolicy()],
+      },
+    })
+  })
   mkdirSync(keysDir, { recursive: true })
   store.load()
   cwdStore.load()
@@ -315,9 +394,8 @@ app.whenReady().then(() => {
   })
 })
 
-app.on('window-all-closed', () => {
-  captureCwds() // snapshot local cwds before the shells die so reopen restores them
-  for (const s of sessions.values()) s.pty.kill()
-  sessions.clear()
+app.on('window-all-closed', async () => {
+  await captureCwds() // snapshot local cwds before the shells die so reopen restores them
+  killAllSessions()
   if (process.platform !== 'darwin') app.quit()
 })

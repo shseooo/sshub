@@ -4,15 +4,23 @@
 // window closes (or the app quits) and respawn the shell there next launch.
 // SSH sessions are excluded — the remote cwd is not ours to restore.
 
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs'
+import { promisify } from 'node:util'
+
+const execFileAsync = promisify(execFile)
 
 /**
  * Current working directory of a running process by pid, or null if it cannot be
  * determined (process gone, tool missing, unsupported platform). The pty's pid
  * is the login shell itself, whose cwd tracks the user's `cd`s.
+ *
+ * Async on purpose: this runs on the debounced scrollback-save beat while the
+ * terminal is in active use. On macOS the cwd comes from spawning `lsof`, and a
+ * synchronous spawn would block the main-process event loop (and thus every
+ * terminal's I/O) for the tens-to-hundreds of ms lsof can take.
  */
-export function readPidCwd(pid: number): string | null {
+export async function readPidCwd(pid: number): Promise<string | null> {
   try {
     if (process.platform === 'linux') {
       return readlinkSync(`/proc/${pid}/cwd`)
@@ -21,10 +29,12 @@ export function readPidCwd(pid: number): string | null {
       // `lsof -Fn -d cwd` prints the cwd path on a line prefixed with 'n'. Use the
       // absolute path: a GUI-launched (Finder/dock) app has a minimal PATH that may
       // not include /usr/sbin.
-      const out = execFileSync('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-Fn', '-p', String(pid)], {
-        encoding: 'utf8',
-      })
-      const line = out.split('\n').find((l) => l.startsWith('n'))
+      const { stdout } = await execFileAsync(
+        '/usr/sbin/lsof',
+        ['-a', '-d', 'cwd', '-Fn', '-p', String(pid)],
+        { encoding: 'utf8' }
+      )
+      const line = stdout.split('\n').find((l) => l.startsWith('n'))
       return line ? line.slice(1) : null
     }
   } catch {
