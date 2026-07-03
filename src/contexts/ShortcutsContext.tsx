@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState } from 'react'
+import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import {
   DEFAULT_SHORTCUTS,
   loadShortcuts,
@@ -39,11 +39,11 @@ export function ShortcutsProvider({ children }: { children: React.ReactNode }) {
     })
   }, [])
 
-  return (
-    <ShortcutsContext.Provider value={{ shortcuts, setShortcut, replaceShortcuts }}>
-      {children}
-    </ShortcutsContext.Provider>
+  const value = useMemo(
+    () => ({ shortcuts, setShortcut, replaceShortcuts }),
+    [shortcuts, setShortcut, replaceShortcuts]
   )
+  return <ShortcutsContext.Provider value={value}>{children}</ShortcutsContext.Provider>
 }
 
 export function useShortcuts() {

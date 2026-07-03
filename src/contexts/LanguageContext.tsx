@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState } from 'react'
+import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import { detectLang, translate, type Lang } from '@/i18n'
 
 type TFn = (key: string, params?: Record<string, string | number>) => string
@@ -21,9 +21,8 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
 
   const t = useCallback<TFn>((key, params) => translate(lang, key, params), [lang])
 
-  return (
-    <LanguageContext.Provider value={{ lang, setLang, t }}>{children}</LanguageContext.Provider>
-  )
+  const value = useMemo(() => ({ lang, setLang, t }), [lang, setLang, t])
+  return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>
 }
 
 export function useT() {

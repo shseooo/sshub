@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { PaneNode, TerminalLeaf, TerminalTab } from '@/types/terminal'
 import { insertAtIndex, reorderTabs, tabsExcept, tabsUpToInclusive } from '@/lib/tabOps'
 
@@ -343,32 +343,52 @@ export function TerminalProvider({ children }: { children: React.ReactNode }) {
     })
   }, [])
 
-  return (
-    <TerminalContext.Provider
-      value={{
-        tabs,
-        activeTab,
-        setActiveTab,
-        openTab,
-        closeTab,
-        splitActive,
-        closePane,
-        reconnectTab,
-        reconnectPane,
-        setSplitSizes,
-        renameTab,
-        renamePane,
-        movePane,
-        mergeTab,
-        detachPane,
-        reorderTab,
-        closeOthers,
-        closeToRight,
-      }}
-    >
-      {children}
-    </TerminalContext.Provider>
+  // Memoized so consumers only re-render when tabs/activeTab actually change,
+  // not on every provider render (all handlers below are stable useCallbacks).
+  const value = useMemo(
+    () => ({
+      tabs,
+      activeTab,
+      setActiveTab,
+      openTab,
+      closeTab,
+      splitActive,
+      closePane,
+      reconnectTab,
+      reconnectPane,
+      setSplitSizes,
+      renameTab,
+      renamePane,
+      movePane,
+      mergeTab,
+      detachPane,
+      reorderTab,
+      closeOthers,
+      closeToRight,
+    }),
+    [
+      tabs,
+      activeTab,
+      setActiveTab,
+      openTab,
+      closeTab,
+      splitActive,
+      closePane,
+      reconnectTab,
+      reconnectPane,
+      setSplitSizes,
+      renameTab,
+      renamePane,
+      movePane,
+      mergeTab,
+      detachPane,
+      reorderTab,
+      closeOthers,
+      closeToRight,
+    ]
   )
+
+  return <TerminalContext.Provider value={value}>{children}</TerminalContext.Provider>
 }
 
 export function useTerminal() {

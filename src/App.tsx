@@ -1,14 +1,18 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { loadStartRoute } from './lib/startup'
 import Sidebar from './components/Sidebar'
 import TerminalHost from './components/TerminalHost'
 import { TerminalProvider } from './contexts/TerminalContext'
-import Dashboard from './pages/Dashboard'
-import ServerList from './pages/ServerList'
-import ServerEdit from './pages/ServerEdit'
-import KeyManager from './pages/KeyManager'
-import SettingsPage from './pages/Settings'
+
+// Route pages are code-split: only the screen the user opens is parsed/evaluated
+// at startup. TerminalHost stays eager — it's always mounted to keep sessions
+// alive across route changes.
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const ServerList = lazy(() => import('./pages/ServerList'))
+const ServerEdit = lazy(() => import('./pages/ServerEdit'))
+const KeyManager = lazy(() => import('./pages/KeyManager'))
+const SettingsPage = lazy(() => import('./pages/Settings'))
 
 function App() {
   const navigate = useNavigate()
@@ -42,17 +46,19 @@ function App() {
           <Sidebar />
 
           <main className="flex-1 overflow-auto">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/servers" element={<ServerList />} />
-            <Route path="/servers/new" element={<ServerEdit />} />
-            <Route path="/servers/:id/edit" element={<ServerEdit />} />
-            <Route path="/keys" element={<KeyManager />} />
-            {/* Terminal UI is rendered by the always-mounted TerminalHost below */}
-            <Route path="/terminal" element={null} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <Suspense fallback={null}>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/servers" element={<ServerList />} />
+              <Route path="/servers/new" element={<ServerEdit />} />
+              <Route path="/servers/:id/edit" element={<ServerEdit />} />
+              <Route path="/keys" element={<KeyManager />} />
+              {/* Terminal UI is rendered by the always-mounted TerminalHost below */}
+              <Route path="/terminal" element={null} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
 
             <TerminalHost />
           </main>
