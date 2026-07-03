@@ -2,7 +2,7 @@
 // src/lib/bridge.ts) to backend commands. Terminal uses node-pty; persistent
 // data uses the JSON Store.
 
-import { app, BrowserWindow, dialog, ipcMain, session, shell, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { existsSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
@@ -69,6 +69,23 @@ function writeServerPem(id: number, pem: string): void {
 }
 function removeServerPem(id: number): void {
   rmSync(join(keysDir, serverPemFileName(id)), { force: true })
+}
+
+// Native app menu with NO View section: sshub is a desktop app, not a web page,
+// so we drop the browser-like affordances the default Electron menu ships with —
+// reload (Cmd+R), force-reload, toggle devtools (Opt+Cmd+I), and zoom. Removing
+// the menu items removes their accelerators. Keep the standard app/edit/window
+// menus so Quit, copy/paste, and window management still work.
+function buildAppMenu() {
+  const isMac = process.platform === 'darwin'
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [{ role: 'appMenu' as const }]
+      : [{ label: 'File', submenu: [{ role: 'quit' as const }] }]),
+    { role: 'editMenu' },
+    { role: 'windowMenu' },
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
 function createWindow() {
@@ -427,6 +444,7 @@ app.whenReady().then(() => {
       },
     })
   })
+  buildAppMenu()
   mkdirSync(keysDir, { recursive: true })
   store.load()
   cwdStore.load()

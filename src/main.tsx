@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { BrowserRouter } from 'react-router-dom'
+import { HashRouter } from 'react-router-dom'
 import App from './App'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ConfirmProvider } from './components/ui/ConfirmDialog'
@@ -31,9 +31,9 @@ createRoot(document.getElementById('root')!).render(
           <ShortcutsProvider>
             <QueryClientProvider client={queryClient}>
               <ConfirmProvider>
-                <BrowserRouter>
+                <HashRouter>
                   <App />
-                </BrowserRouter>
+                </HashRouter>
               </ConfirmProvider>
             </QueryClientProvider>
           </ShortcutsProvider>
