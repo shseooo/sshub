@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import type { Server } from '@/types/server'
 import type { Store } from './store'
 import { parseSshConfig, renderSshConfig } from './lib/sshConfig'
+import { backupsToPrune } from './lib/configBackups'
 
 const MAX_CONFIG_BACKUPS = 10
 
@@ -27,10 +28,7 @@ function configPaths() {
 /** Keep only the newest MAX_CONFIG_BACKUPS `config.bak.*` files (they accrue per sync). */
 function pruneBackups(dir: string): void {
   try {
-    const baks = readdirSync(dir)
-      .filter((f) => f.startsWith('config.bak.'))
-      .sort() // timestamp suffix sorts chronologically
-    for (const f of baks.slice(0, Math.max(0, baks.length - MAX_CONFIG_BACKUPS))) {
+    for (const f of backupsToPrune(readdirSync(dir), MAX_CONFIG_BACKUPS)) {
       rmSync(join(dir, f), { force: true })
     }
   } catch {
