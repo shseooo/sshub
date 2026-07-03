@@ -122,9 +122,14 @@ export function importData(path: string, passphrase?: string): Promise<ImportSum
 
 // ==================== Terminal Commands ====================
 
-/** Spawns ssh (or a local shell when serverId is null) in a PTY. */
-export function startTerminalSession(sessionId: string, serverId: number | null): Promise<void> {
-  return invoke<void>('start_terminal_session', { sessionId, serverId })
+/** Spawns ssh (or a local shell when serverId is null) in a PTY. `cwdFromSessionId`
+ *  (a local split's source pane) makes the new shell start in that pane's cwd. */
+export function startTerminalSession(
+  sessionId: string,
+  serverId: number | null,
+  cwdFromSessionId?: string
+): Promise<void> {
+  return invoke<void>('start_terminal_session', { sessionId, serverId, cwdFromSessionId })
 }
 
 export function writeTerminal(sessionId: string, data: string): Promise<void> {

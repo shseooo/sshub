@@ -4,11 +4,16 @@ import { insertAtIndex, reorderTabs, tabsExcept, tabsUpToInclusive } from '@/lib
 
 const uid = () => crypto.randomUUID()
 const even = (n: number) => Array.from({ length: n }, () => 100 / n)
-const newLeaf = (serverId: number | null, label: string): TerminalLeaf => ({
+const newLeaf = (
+  serverId: number | null,
+  label: string,
+  cwdFromSessionId?: string
+): TerminalLeaf => ({
   type: 'leaf',
   sessionId: uid(),
   serverId,
   label,
+  cwdFromSessionId,
 })
 
 // ==================== Pure tree operations ====================
@@ -209,8 +214,10 @@ export function TerminalProvider({ children }: { children: React.ReactNode }) {
       focusedSession: string | null
     ): string => {
       // Create the new pane up front so the caller can focus it (highlight +
-      // cursor both land on the new pane, not the one it was split from).
-      const addition = newLeaf(serverId, label)
+      // cursor both land on the new pane, not the one it was split from). A local
+      // split inherits the focused pane's cwd (resolved live at session start);
+      // an SSH split (serverId set) opens its own remote home instead.
+      const addition = newLeaf(serverId, label, serverId == null ? focusedSession ?? undefined : undefined)
       setTabs((prev) =>
         prev.map((t) => {
           if (t.id !== activeTab) return t

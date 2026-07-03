@@ -5,6 +5,10 @@ export interface TerminalLeaf {
   sessionId: string
   serverId: number | null
   label: string
+  /** Transient (not persisted): when this leaf was just created by splitting a
+   *  local pane, the source pane's session id. The new local shell starts in that
+   *  pane's current working directory. Consumed once at first session start. */
+  cwdFromSessionId?: string
 }
 
 /** A split container holding child panes side by side ('row') or stacked ('column'). */

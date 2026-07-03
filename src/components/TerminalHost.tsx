@@ -186,7 +186,7 @@ function LeafView({ leaf, ctx }: { leaf: TerminalLeaf; ctx: NodeCtx }) {
   useEffect(() => {
     const el = hostRef.current
     if (!el) return
-    pool.mountInto(leaf.sessionId, leaf.serverId, el)
+    pool.mountInto(leaf.sessionId, leaf.serverId, el, leaf.cwdFromSessionId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leaf.sessionId, leaf.serverId])
 

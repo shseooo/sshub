@@ -189,7 +189,12 @@ function resolveCommand(serverId: number | null): {
   return { file: 'ssh', args: buildSshArgs(server, { keyPath, pemPath }), banner: buildConnectBanner(server) }
 }
 
-function startSession(sender: WebContents, sessionId: string, serverId: number | null) {
+async function startSession(
+  sender: WebContents,
+  sessionId: string,
+  serverId: number | null,
+  cwdFromSessionId?: string
+) {
   // Never leak a PTY by overwriting a live session with the same id — kill the
   // previous one first (e.g. a reload that respawns before cleanup ran).
   const existing = sessions.get(sessionId)
@@ -198,9 +203,19 @@ function startSession(sender: WebContents, sessionId: string, serverId: number |
     sessions.delete(sessionId)
   }
   const { file, args, banner } = resolveCommand(serverId)
-  // Local sessions reopen in their last working directory; SSH starts at the
-  // remote home as before. Falls back to home if the saved dir is gone.
-  const cwd = (serverId == null && cwdStore.get(sessionId)) || homedir()
+  // Local shell cwd resolution:
+  //  - a fresh local split inherits the focused pane's live cwd (cwdFromSessionId),
+  //  - otherwise a restored session reopens in its last saved cwd,
+  //  - falling back to home. SSH always starts at the remote home.
+  let cwd = homedir()
+  if (serverId == null) {
+    const src = cwdFromSessionId ? sessions.get(cwdFromSessionId) : undefined
+    if (src && src.serverId == null) {
+      cwd = (await readPidCwd(src.pty.pid)) || homedir()
+    } else if (!cwdFromSessionId) {
+      cwd = cwdStore.get(sessionId) || homedir()
+    }
+  }
   const p = pty.spawn(file, args, {
     name: 'xterm-256color',
     cols: 80,
@@ -266,7 +281,12 @@ ipcMain.handle('invoke', async (e, cmd: string, args: Record<string, unknown> = 
 
     // ---- terminal ----
     case 'start_terminal_session':
-      startSession(e.sender, args.sessionId as string, (args.serverId as number | null) ?? null)
+      await startSession(
+        e.sender,
+        args.sessionId as string,
+        (args.serverId as number | null) ?? null,
+        args.cwdFromSessionId as string | undefined
+      )
       return null
     case 'write_terminal':
       sessions.get(args.sessionId as string)?.pty.write(args.data as string)

@@ -104,7 +104,7 @@ export class TerminalPool {
     this.cfg = cfg
   }
 
-  private create(sessionId: string, serverId: number | null): Entry {
+  private create(sessionId: string, serverId: number | null, cwdFromSessionId?: string): Entry {
     const container = document.createElement('div')
     container.className = 'h-full w-full'
     const term = new XTerm({
@@ -304,7 +304,7 @@ export class TerminalPool {
         }
 
         try {
-          await startTerminalSession(sessionId, serverId)
+          await startTerminalSession(sessionId, serverId, cwdFromSessionId)
           await resizeTerminal(sessionId, term.cols, term.rows)
         } catch (err) {
           term.write(`\r\n\x1b[31m${this.cfg.connectFail}: ${err}\x1b[0m\r\n`)
@@ -340,9 +340,9 @@ export class TerminalPool {
   }
 
   /** Ensure a session exists and reparent its container into `parent`. */
-  mountInto(sessionId: string, serverId: number | null, parent: HTMLElement) {
+  mountInto(sessionId: string, serverId: number | null, parent: HTMLElement, cwdFromSessionId?: string) {
     let e = this.entries.get(sessionId)
-    if (!e) e = this.create(sessionId, serverId)
+    if (!e) e = this.create(sessionId, serverId, cwdFromSessionId)
     if (e.container.parentElement !== parent) parent.appendChild(e.container)
     this.refit(sessionId)
   }
