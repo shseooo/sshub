@@ -92,6 +92,28 @@ export class TerminalPool {
 
   constructor(cfg: PoolConfig) {
     this.cfg = cfg
+    // macOS can corrupt the WebGL glyph atlas while the window is occluded or the
+    // GPU sleeps — glyphs render as garbage tiles until something rebuilds the
+    // atlas (historically: a manual window resize). The context is not reported
+    // lost in this case, so rebake every atlas whenever the app returns to the
+    // foreground; it's cheap and glyphs re-rasterize lazily.
+    window.addEventListener('focus', this.rebakeAtlases)
+    document.addEventListener('visibilitychange', this.onVisibilityChange)
+  }
+
+  private rebakeAtlases = () => {
+    for (const e of this.entries.values()) {
+      try {
+        e.term.clearTextureAtlas()
+        e.term.refresh(0, e.term.rows - 1)
+      } catch {
+        /* terminal mid-teardown */
+      }
+    }
+  }
+
+  private onVisibilityChange = () => {
+    if (document.visibilityState === 'visible') this.rebakeAtlases()
   }
 
   private create(sessionId: string, serverId: number | null): Entry {
@@ -119,15 +141,6 @@ export class TerminalPool {
     term.loadAddon(search)
     term.open(container)
 
-    // GPU renderer for fast large-output scrolling; fall back to DOM on context loss.
-    try {
-      const webgl = new WebglAddon()
-      webgl.onContextLoss(() => webgl.dispose())
-      term.loadAddon(webgl)
-    } catch {
-      /* WebGL unavailable → xterm keeps its DOM renderer */
-    }
-
     const d1 = term.onData((data) => this.cfg.onInput(sessionId, data))
     const d2 = term.onResize(({ cols, rows }) => {
       resizeTerminal(sessionId, cols, rows).catch(() => {})
@@ -152,6 +165,26 @@ export class TerminalPool {
       saveTimer: null,
     }
     this.entries.set(sessionId, entry)
+
+    // GPU renderer for fast large-output scrolling. A GPU reset (sleep/wake,
+    // driver restart) drops the WebGL context; instead of permanently falling
+    // back to the slow DOM renderer, try to re-acquire a fresh context a few
+    // times. Each attempt rebuilds the glyph atlas from scratch, so a reset
+    // also recovers any atlas corruption.
+    let webglRetries = 0
+    const loadWebgl = () => {
+      try {
+        const webgl = new WebglAddon()
+        webgl.onContextLoss(() => {
+          webgl.dispose()
+          if (!entry.disposed && webglRetries++ < 3) setTimeout(loadWebgl, 1000)
+        })
+        term.loadAddon(webgl)
+      } catch {
+        /* WebGL unavailable → xterm keeps its DOM renderer */
+      }
+    }
+    loadWebgl()
 
     // When the web font finally lands, drop the atlas that was baked with the
     // fallback font and remeasure, so the first render after the swap is crisp
@@ -375,6 +408,8 @@ export class TerminalPool {
   }
 
   disposeAll() {
+    window.removeEventListener('focus', this.rebakeAtlases)
+    document.removeEventListener('visibilitychange', this.onVisibilityChange)
     for (const [id, e] of this.entries) this.disposeEntry(id, e)
   }
 }
