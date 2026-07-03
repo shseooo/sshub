@@ -439,15 +439,31 @@ app.whenReady().then(() => {
   dialog.showErrorBox('sshub 시작 실패', String(e instanceof Error ? e.stack || e.message : e))
 })
 
-app.on('window-all-closed', async () => {
+// cwd is read from the LIVE shell (via lsof), so we must snapshot before killing
+// — and because the read is async, quit must wait for it to finish.
+async function snapshotAndReap() {
   await captureCwds() // snapshot local cwds before the shells die so reopen restores them
   killAllSessions()
+}
+
+app.on('window-all-closed', async () => {
+  await snapshotAndReap()
   if (process.platform !== 'darwin') app.quit()
 })
 
-// Catch-all for the quit paths window-all-closed doesn't cover (e.g. Cmd+Q with
-// the window still open, or app.quit()), so PTYs — especially SSH — never linger.
-app.on('before-quit', () => killAllSessions())
+// Covers the quit paths window-all-closed doesn't (Cmd+Q with the window open,
+// app.quit()). before-quit fires BEFORE windows close, so if we killed PTYs here
+// the later cwd snapshot would read dead processes and lose the path. Instead,
+// defer the quit until we've snapshotted the still-live shells, then quit for real.
+let reaped = false
+app.on('before-quit', (e) => {
+  if (reaped) return
+  e.preventDefault()
+  snapshotAndReap().finally(() => {
+    reaped = true
+    app.quit()
+  })
+})
 
 // A stray exception or rejection in a callback (pty.onData, fire-and-forget IPC)
 // must not silently take down the main process and every session with it. Log
