@@ -1,5 +1,5 @@
-// ~/.ssh/config parse + render — ported from ssh_config.rs. Pure; the I/O
-// (read/write/backup) lives in the command layer.
+// ~/.ssh/config parse + render. Pure; the I/O (read/write/backup) lives in the
+// command layer.
 
 import type { Server, CreateServerDto } from '@/types/server'
 
@@ -72,15 +72,34 @@ export function parseSshConfig(content: string): CreateServerDto[] {
   return entries
 }
 
+// ssh_config is line-oriented, so a newline (or other control char) embedded in
+// a field value would let a crafted server name/host/user inject arbitrary
+// directives — e.g. a `ProxyCommand` that runs on the next `ssh`. Strip control
+// chars from every value before writing; legitimate names/hosts/users never
+// contain them. Untrusted values reach here via config import round-trips and
+// shared/edited server entries.
+function sanitizeConfigValue(value: string): string {
+  // Keep everything except C0 control chars (< 0x20, incl. CR/LF/TAB) and DEL
+  // (0x7f). Printable Unicode (e.g. non-ASCII names) is preserved.
+  let out = ''
+  for (const ch of value) {
+    const code = ch.charCodeAt(0)
+    if (code >= 0x20 && code !== 0x7f) out += ch
+  }
+  return out
+}
+
 /** Render all servers to ssh config text (overwrites ~/.ssh/config). */
 export function renderSshConfig(servers: Server[]): string {
   let out = ''
   for (const s of servers) {
-    const displayName = s.groupName && s.groupName !== '' ? `${s.groupName}-${s.name}` : s.name
+    const name = sanitizeConfigValue(s.name)
+    const group = s.groupName ? sanitizeConfigValue(s.groupName) : ''
+    const displayName = group !== '' ? `${group}-${name}` : name
     out += `Host ${displayName}\n`
-    out += `    HostName ${s.host}\n`
+    out += `    HostName ${sanitizeConfigValue(s.host)}\n`
     out += `    Port ${s.port}\n`
-    out += `    User ${s.username}\n`
+    out += `    User ${sanitizeConfigValue(s.username)}\n`
     out += '\n'
   }
   return out

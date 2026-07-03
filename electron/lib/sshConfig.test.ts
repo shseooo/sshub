@@ -66,4 +66,20 @@ describe('renderSshConfig', () => {
     const parsed = parseSshConfig(renderSshConfig([srv({ name: 'r', host: 'h', port: 2200, username: 'u' })]))
     expect(parsed[0]).toMatchObject({ name: 'r', host: 'h', port: 2200, username: 'u' })
   })
+
+  it('collapses newlines so a crafted field cannot inject a directive (ProxyCommand RCE)', () => {
+    const out = renderSshConfig([srv({ host: '10.0.0.1\n    ProxyCommand touch /tmp/pwned' })])
+    // The newline is gone, so there is no standalone ProxyCommand directive line;
+    // the payload stays on the HostName line as inert text.
+    expect(out).not.toMatch(/\n\s*ProxyCommand/)
+    expect(out).toContain('    HostName 10.0.0.1    ProxyCommand touch /tmp/pwned')
+  })
+
+  it('strips control chars from every field so no extra directive/Host block appears', () => {
+    const out = renderSshConfig([
+      srv({ name: 'a\r\nHost evil', host: 'h\nProxyCommand x', username: 'u\nProxyCommand y', groupName: 'g\nHost z' }),
+    ])
+    expect(out).not.toMatch(/\n\s*ProxyCommand/) // no injected directive lines
+    expect(out.match(/^Host /gm)).toHaveLength(1) // exactly one Host block
+  })
 })

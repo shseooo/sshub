@@ -30,6 +30,10 @@ const en: Dict = {
   'common.import': 'Import',
   'common.importing': 'Importing...',
   'common.export': 'Export',
+  // error boundary
+  'error.title': 'Something went wrong',
+  'error.message': 'The screen failed to render. Your terminal sessions are still running. Reload to recover.',
+  'error.reload': 'Reload',
   // dashboard
   'dashboard.newServer': 'New Server',
   'dashboard.emptyHint': 'Add a server, or import ~/.ssh/config from Settings.',
@@ -230,6 +234,10 @@ const ko: Dict = {
   'common.import': '가져오기',
   'common.importing': '가져오는 중...',
   'common.export': '내보내기',
+  // error boundary
+  'error.title': '문제가 발생했습니다',
+  'error.message': '화면을 그리지 못했습니다. 터미널 세션은 그대로 유지되고 있습니다. 다시 불러오면 복구됩니다.',
+  'error.reload': '다시 불러오기',
   'dashboard.newServer': '새 서버',
   'dashboard.emptyHint': '서버를 추가하거나 설정에서 ~/.ssh/config를 가져오세요.',
   'dashboard.addServerCta': '서버 추가하기',
@@ -421,6 +429,10 @@ const ja: Dict = {
   'common.import': 'インポート',
   'common.importing': 'インポート中...',
   'common.export': 'エクスポート',
+  // error boundary
+  'error.title': '問題が発生しました',
+  'error.message': '画面の描画に失敗しました。ターミナルのセッションは維持されています。再読み込みで復帰できます。',
+  'error.reload': '再読み込み',
   'dashboard.newServer': '新規サーバー',
   'dashboard.emptyHint': 'サーバーを追加するか、設定から ~/.ssh/config を取り込んでください。',
   'dashboard.addServerCta': 'サーバーを追加',

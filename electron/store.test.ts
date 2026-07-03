@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { normalizeData, Store } from './store'
@@ -62,6 +62,20 @@ describe('Store (file-backed, atomic, 0600)', () => {
     const s = new Store(path)
     s.load()
     expect(s.listKeysRaw()[0].pemData).toBeNull()
+  })
+
+  it('recovers from a corrupt file: boots empty, preserves the original, does not throw', () => {
+    writeFileSync(path, '{ this is not valid json ')
+    const s = new Store(path)
+    expect(() => s.load()).not.toThrow()
+    expect(s.listServers()).toEqual([])
+    // a .corrupt.* backup of the unparseable file is kept for recovery
+    const backups = readdirSync(dir).filter((f) => f.includes('.corrupt.'))
+    expect(backups).toHaveLength(1)
+    // and the store is now a valid, reloadable file
+    const reloaded = new Store(path)
+    reloaded.load()
+    expect(reloaded.listServers()).toEqual([])
   })
 
   it('toggleFavorite flips and persists', () => {

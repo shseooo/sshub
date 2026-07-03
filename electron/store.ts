@@ -2,7 +2,7 @@
 // points it at ~/Library/Application Support/sshub.json). Every mutation is
 // persisted atomically (temp file + rename) with 0600 permissions.
 
-import { closeSync, fsyncSync, openSync, readFileSync, renameSync, writeSync, chmodSync, existsSync } from 'node:fs'
+import { closeSync, copyFileSync, fsyncSync, openSync, readFileSync, renameSync, writeSync, chmodSync, existsSync } from 'node:fs'
 import type { Server, CreateServerDto, UpdateServerDto } from '@/types/server'
 import type { SshKey } from '@/types/key'
 import {
@@ -63,13 +63,33 @@ export class Store {
 
   load(): void {
     let raw: Partial<StoreData> | null = null
+    let recovered = false
     if (existsSync(this.path)) {
-      raw = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<StoreData>
+      try {
+        raw = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<StoreData>
+      } catch {
+        // Corrupt/unparseable store (partial write, disk error, manual edit).
+        // Preserve it for recovery instead of overwriting, and boot from empty
+        // so the app still opens rather than failing to create a window.
+        this.backupCorrupt()
+        raw = null
+        recovered = true
+      }
     }
     const hadSecret = (raw?.keys ?? []).some((k) => k.pemData != null)
     this.data = normalizeData(raw)
-    // One-time cleanup: if the file held key material, re-persist the scrubbed copy.
-    if (hadSecret) this.save()
+    // Re-persist when we scrubbed key material out, or replaced a corrupt file.
+    if (hadSecret || recovered) this.save()
+  }
+
+  /** Move a corrupt store aside as sshub.json.corrupt.<timestamp> (best-effort). */
+  private backupCorrupt(): void {
+    try {
+      const stamp = now().replace(/[:.]/g, '-')
+      copyFileSync(this.path, `${this.path}.corrupt.${stamp}`)
+    } catch {
+      /* if we can't preserve it, the fresh save() below still lets the app boot */
+    }
   }
 
   private save(): void {

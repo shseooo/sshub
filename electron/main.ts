@@ -48,6 +48,18 @@ function killAllSessions() {
   sessions.clear()
 }
 
+// File-system commands (load_key_file, export_data, import_data) must only touch
+// paths the USER explicitly picked in a native open/save dialog — never an
+// arbitrary path the renderer supplies. A native dialog can't be auto-driven by
+// the renderer, so this set only ever holds real user choices, which turns those
+// commands from an arbitrary file read/write primitive into a scoped one.
+const dialogPaths = new Set<string>()
+function assertDialogPath(path: string): void {
+  if (!dialogPaths.has(path)) {
+    throw new Error('허용되지 않은 경로입니다. 파일 선택 창을 통해 다시 시도하세요.')
+  }
+}
+
 // Server PEMs (for `pem` auth) live in 0600 files keyed by server id — never in
 // the JSON store.
 function writeServerPem(id: number, pem: string): void {
@@ -257,8 +269,11 @@ ipcMain.handle('invoke', async (e, cmd: string, args: Record<string, unknown> = 
     case 'delete_ssh_key':
       keys.deleteSshKey(keyCtx, args.id as number)
       return null
-    case 'load_key_file':
-      return keys.loadKeyFile(args.path as string)
+    case 'load_key_file': {
+      const p = args.path as string
+      assertDialogPath(p)
+      return keys.loadKeyFile(p)
+    }
     case 'derive_public_key_from_pem':
       return keys.derivePublicKeyFromPem(keyCtx, args.pem as string, args.passphrase as string | undefined)
 
@@ -286,12 +301,16 @@ ipcMain.handle('invoke', async (e, cmd: string, args: Record<string, unknown> = 
         filters: o.filters,
         properties: [o.directory ? 'openDirectory' : 'openFile'],
       })
-      return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
+      if (r.canceled || r.filePaths.length === 0) return null
+      dialogPaths.add(r.filePaths[0])
+      return r.filePaths[0]
     }
     case 'dialog_save': {
       const o = args as { title?: string; defaultPath?: string; filters?: Electron.FileFilter[] }
       const r = await dialog.showSaveDialog({ title: o.title, defaultPath: o.defaultPath, filters: o.filters })
-      return r.canceled || !r.filePath ? null : r.filePath
+      if (r.canceled || !r.filePath) return null
+      dialogPaths.add(r.filePath)
+      return r.filePath
     }
 
     // ---- ssh_config sync ----
@@ -302,16 +321,22 @@ ipcMain.handle('invoke', async (e, cmd: string, args: Record<string, unknown> = 
       return syncConfigToServers(store)
 
     // ---- backup export / import ----
-    case 'export_data':
-      backup.exportData({ store, keysDir }, args.path as string, {
+    case 'export_data': {
+      const p = args.path as string
+      assertDialogPath(p)
+      backup.exportData({ store, keysDir }, p, {
         passphrase: args.passphrase as string | null,
         shortcuts: args.shortcuts as Record<string, string> | null,
         serverIds: args.serverIds as number[] | null,
         keyIds: args.keyIds as number[] | null,
       })
       return null
-    case 'import_data':
-      return backup.importData({ store, keysDir }, args.path as string, args.passphrase as string | null)
+    }
+    case 'import_data': {
+      const p = args.path as string
+      assertDialogPath(p)
+      return backup.importData({ store, keysDir }, p, args.passphrase as string | null)
+    }
 
     // ---- terminal scrollback persistence ----
     case 'scrollback_save': {
@@ -392,6 +417,9 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+}).catch((e) => {
+  // Never fail silently with no window — tell the user what broke.
+  dialog.showErrorBox('sshub 시작 실패', String(e instanceof Error ? e.stack || e.message : e))
 })
 
 app.on('window-all-closed', async () => {
