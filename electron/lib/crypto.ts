@@ -1,7 +1,5 @@
 // Passphrase encryption for backup exports — AES-256-GCM with a scrypt-derived
-// key. Replaces the Rust `cocoon` format (new format; old encrypted exports are
-// not readable — plain JSON exports are unaffected). Envelope is JSON so it's
-// easy to detect on import.
+// key. Envelope is JSON so it's easy to detect on import.
 
 import { randomBytes, scryptSync, createCipheriv, createDecipheriv } from 'node:crypto'
 

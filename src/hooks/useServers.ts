@@ -6,7 +6,7 @@ import {
   getServers,
   toggleFavorite,
   updateServer,
-} from '@/lib/tauriCommands'
+} from '@/lib/commands'
 import type { CreateServerDto, UpdateServerDto } from '@/types/server'
 
 export const serverKeys = {

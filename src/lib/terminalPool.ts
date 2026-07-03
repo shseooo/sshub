@@ -7,7 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { listen, loadScrollback, saveScrollback, deleteScrollback, openExternal, revealPath } from '@/lib/bridge'
 import { findFilePaths } from '@/lib/filePaths'
 import { trimSelectionTrailing } from '@/lib/selection'
-import { startTerminalSession, resizeTerminal, closeTerminal } from '@/lib/tauriCommands'
+import { startTerminalSession, resizeTerminal, closeTerminal } from '@/lib/commands'
 import type { Theme } from '@/lib/theme'
 
 // Keep the last N lines of each terminal's output so a restored session shows

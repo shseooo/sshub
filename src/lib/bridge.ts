@@ -1,10 +1,6 @@
 // IPC bridge to the Electron main process (window.electronAPI, from
 // electron/preload.cjs). All renderer→backend calls go through here so call
 // sites stay decoupled from the Electron API surface.
-//
-// (Earlier this also routed to Tauri/WKWebView; Tauri was dropped in v0.2.0
-// because WKWebView delivers CJK/IME input without composition events, which
-// xterm.js can't handle. Chromium fires proper composition events.)
 
 interface ElectronAPI {
   invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown>

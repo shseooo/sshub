@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { openFileDialog, saveFileDialog } from '@/lib/bridge'
-import { syncServersToConfig, syncConfigToServers, exportData, importData } from '@/lib/tauriCommands'
+import { syncServersToConfig, syncConfigToServers, exportData, importData } from '@/lib/commands'
 import { useEffect } from 'react'
 import { serverKeys, useServers } from '@/hooks/useServers'
 import { sshKeyKeys, useSshKeys } from '@/hooks/useKeys'
@@ -84,7 +84,7 @@ export default function Settings() {
   const [selKeys, setSelKeys] = useState<Set<number>>(new Set())
   const [inclShortcuts, setInclShortcuts] = useState(true)
 
-  const showImportResult = (s: import('@/lib/tauriCommands').ImportSummary) => {
+  const showImportResult = (s: import('@/lib/commands').ImportSummary) => {
     setMessage(
       t('settings.importDone', {
         sa: s.serversAdded,

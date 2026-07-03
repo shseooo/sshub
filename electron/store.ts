@@ -1,7 +1,6 @@
-// JSON-file-backed store, ported from store.rs. All data lives in a single
-// file (the main process points it at ~/Library/Application Support/sshub.json,
-// the same path the Tauri build used, so existing data is preserved). Every
-// mutation is persisted atomically (temp file + rename) with 0600 permissions.
+// JSON-file-backed store. All data lives in a single file (the main process
+// points it at ~/Library/Application Support/sshub.json). Every mutation is
+// persisted atomically (temp file + rename) with 0600 permissions.
 
 import { closeSync, fsyncSync, openSync, readFileSync, renameSync, writeSync, chmodSync, existsSync } from 'node:fs'
 import type { Server, CreateServerDto, UpdateServerDto } from '@/types/server'

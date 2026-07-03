@@ -47,7 +47,7 @@ export function buildSshArgs(server: Server, paths: SshPaths = {}): string[] {
   return args
 }
 
-/** Connecting banner printed before ssh produces output (parity with Tauri). */
+/** Connecting banner printed before ssh produces output. */
 export function buildConnectBanner(server: Server): string {
   const pj = server.proxyJump?.trim()
   const jumpNote = pj ? ` -J ${pj}` : ''

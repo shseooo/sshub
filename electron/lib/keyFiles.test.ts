@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import { keyFileName, serverPemFileName } from './keyFiles'
 
 describe('keyFileName (security boundary — sanitize)', () => {
-  // Ported from the Rust unit test; behavior must match byte-for-byte.
   it('replaces unsafe chars with underscore and prefixes id_', () => {
     expect(keyFileName('my key!')).toBe('id_my_key_')
     expect(keyFileName('ok-name_1')).toBe('id_ok-name_1')

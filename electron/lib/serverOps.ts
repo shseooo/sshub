@@ -1,8 +1,8 @@
-// Pure server-CRUD logic, ported faithfully from the Rust store (store.rs).
-// No I/O — operates on an in-memory { servers, nextServerId } slice and returns
-// new state, so it's fully unit-testable. The store/IPC layer persists the result.
+// Pure server-CRUD logic. No I/O — operates on an in-memory
+// { servers, nextServerId } slice and returns new state, so it's fully
+// unit-testable. The store/IPC layer persists the result.
 //
-// Invariants kept from the Rust impl:
+// Invariants:
 //  - ids come from a monotonic nextServerId counter
 //  - port defaults to 22
 //  - pemData is NEVER kept in the data (secrets live in 0600 files)

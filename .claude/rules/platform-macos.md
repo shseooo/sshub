@@ -2,14 +2,15 @@
 
 ## MUST
 
-- 웹뷰 내부 HTML5 드래그앤드롭을 쓰려면 윈도우 설정에 `dragDropEnabled: false`를
-  지정한다(기본값 true면 OS 파일드롭 핸들러가 DnD 이벤트를 가로챈다).
-- 빌드 후 Finder/Dock 실행을 위해 ad-hoc 서명을 적용한다:
-  `codesign --force --deep --sign - …/sshub.app`.
-- 투명도(vibrancy)는 `macos-private-api` + window-vibrancy로 구현하고, 알파는
-  `--background` CSS 변수에 baked-in 한다(레이어 이중 합성 방지).
+- 빌드 후 Finder/Dock 실행을 위해 ad-hoc 서명을 적용한다(`install.sh`가 수행):
+  `codesign --force --deep --sign - release/mac-arm64/sshub.app`.
+- 투명도는 BrowserWindow `vibrancy: 'hud'` + 투명 `backgroundColor`로 구현하고,
+  알파는 `--background` CSS 변수에 baked-in 한다(레이어 이중 합성 방지).
+- 타이틀바 드래그는 CSS `-webkit-app-region: drag`(`.app-drag`)로 처리한다.
 - 앱 아이콘은 full-bleed 불투명 이미지를 사용한다(투명 마진은 macOS Tahoe에서 회색
   타일로 보임).
+- node-pty는 Electron ABI로 리빌드되어야 한다(electron-builder/`@electron/rebuild`가
+  수행 — 네이티브 모듈 로드 에러 시 의심).
 
 ## MUST NOT
 

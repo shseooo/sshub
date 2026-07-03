@@ -3,11 +3,12 @@
 ## MUST
 
 - 다음 범주는 테스트를 작성한다: 트리/상태 변환(split/merge/insert/remove),
-  파서(`parse_ssh_config`), 직렬화·정규화(`normalizeCombo`·키 타입 판별·파일명
-  새니타이즈), 보안 경계(경로 traversal 차단·비밀 미저장).
+  파서(`electron/lib/sshConfig.ts`), 직렬화·정규화(`normalizeCombo`·키 타입
+  판별·파일명 새니타이즈), 보안 경계(경로 traversal 차단·비밀 미저장·암호화
+  라운드트립).
 - 회귀 버그를 고칠 때는 그 버그를 재현하는 테스트를 먼저 추가한다.
-- 프론트 테스트는 `src/**/*.test.ts(x)`(Vitest), Rust는 동일 파일의 `#[cfg(test)]`
-  모듈에 둔다.
+- 테스트는 대상 파일 옆의 `*.test.ts(x)`에 둔다(Vitest — `src/**`와
+  `electron/**` 모두).
 
 ## SHOULD
 
@@ -22,4 +23,4 @@
 
 - 테스트만을 위해 순수 함수를 `export`로 노출한다.
 
-> 검증: `bun run test` / `bun run test:watch` · `cd src-tauri && cargo test`
+> 검증: `bun run test` / `bun run test:watch`

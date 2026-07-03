@@ -4,11 +4,8 @@
 서버·키 관리, 인앱 PTY 분할 터미널, 기기 간 동기화, 다국어·테마 커스터마이즈를 제공합니다.
 
 > CRT 인광 콘솔 테마의 단일 창 데스크톱 앱 (Electron · Chromium · React · Node).
-
-> **v0.2.0 — Tauri(WKWebView) → Electron(Chromium) 전환.**
-> macOS WKWebView가 한글/CJK 입력을 composition 이벤트 없이 `insertReplacementText`로
-> 전달해 xterm.js가 조합을 처리하지 못하던 문제(예: "상세"→"ㅅㅅ")를, Chromium 기반
-> Electron으로 전환해 해결했습니다. (VS Code가 동일한 xterm.js로 정상 동작하는 것과 같은 원리.)
+> Chromium 기반이라 xterm.js 터미널에서 한글/CJK 입력이 composition 이벤트로
+> 정상 처리됩니다(VS Code가 동일한 xterm.js로 정상 동작하는 것과 같은 원리).
 
 ## 주요 기능
 
@@ -41,9 +38,9 @@
 | 상태 관리  | TanStack Query v5                                          |
 | 테스트     | Vitest (프론트 + Electron 백엔드 순수 로직)                |
 
-프론트엔드(React/xterm)는 그대로 두고, `src/lib/bridge.ts`가 IPC(`invoke`/`listen`)·파일
-다이얼로그·`homeDir`을 **Electron(`window.electronAPI`)** 또는 **Tauri**로 라우팅합니다.
-따라서 호출부는 쉘에 비종속이며, 기존 Tauri 빌드도 폴백으로 동작합니다.
+`src/lib/bridge.ts`가 IPC(`invoke`/`listen`)·파일 다이얼로그·`homeDir`을
+Electron(`window.electronAPI`)으로 라우팅해, 프론트엔드 호출부는 IPC 표면과
+분리됩니다.
 
 ## 사전 요구사항
 
@@ -60,8 +57,6 @@
 
 사전 요구사항을 확인·설치하고, 릴리스 `.app`을 빌드한 뒤 ad-hoc 서명 → `/Applications`
 설치 → 실행까지 자동으로 처리합니다. 재실행해도 안전합니다.
-
-> 기존 Tauri 빌드 스크립트는 `install-tauri.sh`로 남겨두었습니다.
 
 ## 개발 실행
 
@@ -118,7 +113,7 @@ codesign --force --deep --sign - release/mac-arm64/sshub.app
 
 ## 데이터 위치 (macOS)
 
-- 서버/키 메타데이터: `~/Library/Application Support/sshub.json` (비밀 없음, Tauri 빌드와 **동일 경로**라 데이터 그대로 인계)
+- 서버/키 메타데이터: `~/Library/Application Support/sshub.json` (비밀 없음)
 - 생성/가져온 개인 키 · 서버 PEM: `~/Library/Application Support/ssh_keys/` (`0600`)
 - 언어·단축키·테마 등 UI 설정: `localStorage`
 - `서버 → SSH Config` 동기화 시 기존 `~/.ssh/config`는 `config.bak.<타임스탬프>`로 자동 백업됩니다.
@@ -130,7 +125,7 @@ codesign --force --deep --sign - release/mac-arm64/sshub.app
 │   ├── pages/                 # Dashboard, ServerList/Edit, KeyManager, Settings
 │   ├── components/            # Sidebar, TerminalHost(분할 터미널)
 │   ├── contexts/              # Terminal/Language/Shortcuts/Theme
-│   ├── lib/                   # bridge(IPC 라우팅), tauriCommands, terminalPool, theme
+│   ├── lib/                   # bridge(IPC 라우팅), commands, terminalPool, theme
 │   ├── i18n/                  # ko / en / ja 사전
 │   └── types/
 ├── electron/                  # Electron 메인 프로세스 (Node 백엔드)
@@ -138,9 +133,8 @@ codesign --force --deep --sign - release/mac-arm64/sshub.app
 │   ├── preload.ts             # window.electronAPI 노출
 │   ├── store.ts               # JSON 파일 저장소 (원자적 tmp+rename, 0600)
 │   ├── keys.ts / backup.ts / sshConfigFile.ts   # 키관리 / 백업 / ssh_config I/O
-│   └── lib/                   # 순수 로직 + 테스트: serverOps, keyOps, keyType,
-│                              #   keyFiles, ssh, sshConfig, bundleOps, crypto
-└── src-tauri/                 # (구) Tauri 백엔드 — 폴백으로 유지, 추후 제거 예정
+    └── lib/                   # 순수 로직 + 테스트: serverOps, keyOps, keyType,
+                               #   keyFiles, ssh, sshConfig, bundleOps, crypto
 ```
 
 ## 알아두기
@@ -148,4 +142,4 @@ codesign --force --deep --sign - release/mac-arm64/sshub.app
 - 인앱 터미널은 시스템 `ssh`를 PTY(node-pty)로 실행합니다. 비밀번호·호스트키 확인은 터미널 안에서 직접 입력합니다.
 - 비밀번호 인증 서버는 키 제시 없이 바로 비밀번호 프롬프트로 가며, 연결 시 `ConnectTimeout`로 빠르게 실패합니다.
 - 분할로 추가되는 패널과 `+` 탭은 로컬 셸(`$SHELL -l`)을 엽니다.
-- 백업 암호화는 `cocoon`(Tauri)에서 **AES-256-GCM(scrypt)**으로 바뀌었습니다. 평문 export(JSON)는 양쪽 호환되지만, 기존 cocoon 암호화 export 파일은 더 이상 가져올 수 없습니다.
+- 백업 암호화는 **AES-256-GCM(scrypt)**을 사용합니다. 개인 키를 포함해 내보낼 때만 passphrase로 암호화되고, 평문 export(JSON)는 비밀이 제거됩니다.

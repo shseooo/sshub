@@ -39,7 +39,7 @@ export function parseSshConfig(content: string): CreateServerDto[] {
       continue
     }
 
-    // Split at the first '=' or whitespace (matches Rust split_once).
+    // Split at the first '=' or whitespace.
     let i = -1
     for (let j = 0; j < trimmed.length; j++) {
       const c = trimmed[j]

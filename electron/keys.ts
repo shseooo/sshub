@@ -1,6 +1,6 @@
-// Key-management I/O — ported from key.rs. Private key material lives ONLY in
-// 0600 files under ssh_keys/, never in the JSON store. ssh-keygen is shelled out
-// for generation / passphrase change / public-key derivation, matching Tauri.
+// Key-management I/O. Private key material lives ONLY in 0600 files under
+// ssh_keys/, never in the JSON store. ssh-keygen is shelled out for
+// generation / passphrase change / public-key derivation.
 
 import { execFileSync } from 'node:child_process'
 import {

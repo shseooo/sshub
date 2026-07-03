@@ -2,11 +2,10 @@
 
 ## MUST
 
-- 패키지 매니저는 bun 을 사용한다. `tauri.conf.json`의 `beforeBuildCommand`는
-  `bun run build`로 유지한다.
+- 패키지 매니저는 bun 을 사용한다.
 - 안정성·속도·보안을 최우선으로 둔다.
-- 변경을 커밋/완료로 보고하기 전에 `bun run build`, `bun run test`,
-  `cd src-tauri && cargo check && cargo test`를 모두 통과시킨다.
+- 변경을 커밋/완료로 보고하기 전에 `bun run build`, `bun run typecheck:electron`,
+  `bun run test`를 모두 통과시킨다.
 - 사용자에게 노출되는 문자열은 i18n 3종(ko/en/ja)에 동시에 추가한다.
 
 ## MUST NOT
@@ -14,7 +13,7 @@
 - `npm`/`yarn`을 사용하거나 `package-lock.json`을 생성하지 않는다.
 - 시각적 화려함을 안정성·속도·보안보다 앞세우지 않는다.
 - 사용자 문자열을 한 언어에만 추가하지 않는다.
-- `tauri.conf.json`·`~/.ssh/config`의 사용자/린터 지정 값을 임의로 되돌리지 않는다.
+- `~/.ssh/config`의 사용자/린터 지정 값을 임의로 되돌리지 않는다.
 - 대화형 `rm`이나 `git -i` 계열을 사용하지 않는다.
 
 ## SHOULD

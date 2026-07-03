@@ -1,6 +1,6 @@
-// Backup export/import I/O — ported from backup.rs. Plain exports are
-// secret-free JSON; passphrase exports bundle the private key files and encrypt
-// the whole thing (AES-256-GCM via ./lib/crypto, replacing Rust cocoon).
+// Backup export/import I/O. Plain exports are secret-free JSON; passphrase
+// exports bundle the private key files and encrypt the whole thing
+// (AES-256-GCM via ./lib/crypto).
 
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
