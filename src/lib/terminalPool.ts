@@ -40,6 +40,18 @@ interface Entry {
   serialize: SerializeAddon
   search: SearchAddon
   saveTimer: ReturnType<typeof setTimeout> | null
+  /** Whether the viewport is parked at the bottom. Startup restore + late reflows
+   *  (webfont atlas rebuild, tab-show fit) must keep the terminal glued to the
+   *  bottom, but never yank a user who has scrolled up. */
+  pinBottom: boolean
+  /** True while WE are fitting/scrolling the terminal, so the onScroll handler can
+   *  ignore reflow-induced scroll events and only react to genuine user scrolls. */
+  reflowing: boolean
+  /** Deferred restore+session-start, run once the pane first has a real size.
+   *  Writing scrollback into a hidden (0-size) terminal builds the buffer at the
+   *  wrong dimensions and leaves a broken scroll/viewport when it's later shown,
+   *  so background tabs stay empty until first displayed. Null once run. */
+  hydrate: (() => void) | null
 }
 
 // Search highlight colors: all matches get a faint phosphor-green wash; the
@@ -141,12 +153,22 @@ export class TerminalPool {
     term.loadAddon(search)
     term.open(container)
 
-    const d1 = term.onData((data) => this.cfg.onInput(sessionId, data))
+    const d1 = term.onData((data) => {
+      // Typing jumps back to the newest output (standard terminal behavior) and
+      // re-pins, so subsequent output/reflows keep following the bottom.
+      const e = this.entries.get(sessionId)
+      if (e) {
+        e.pinBottom = true
+        this.stickBottom(e)
+      }
+      this.cfg.onInput(sessionId, data)
+    })
     const d2 = term.onResize(({ cols, rows }) => {
       resizeTerminal(sessionId, cols, rows).catch(() => {})
     })
     const ro = new ResizeObserver(() => {
-      if (container.clientWidth > 0 && container.clientHeight > 0) fit.fit()
+      const e = this.entries.get(sessionId)
+      if (e) this.fitEntry(e)
     })
     ro.observe(container)
 
@@ -163,8 +185,23 @@ export class TerminalPool {
       serialize,
       search,
       saveTimer: null,
+      pinBottom: true,
+      reflowing: false,
+      hydrate: null,
     }
     this.entries.set(sessionId, entry)
+
+    // Track the user's scroll intent: pin to bottom while they're at the bottom,
+    // release when they scroll up. Ignore scrolls we cause ourselves (fit reflow,
+    // scrollToBottom) — those must never flip the pin off, or a reflow that lands
+    // a line short of the bottom would permanently un-stick the terminal.
+    entry.disps.push(
+      term.onScroll(() => {
+        if (entry.reflowing) return
+        const buf = term.buffer.active
+        entry.pinBottom = buf.viewportY >= buf.baseY
+      })
+    )
 
     // GPU renderer for fast large-output scrolling. A GPU reset (sleep/wake,
     // driver restart) drops the WebGL context; instead of permanently falling
@@ -194,7 +231,7 @@ export class TerminalPool {
       if (entry.disposed) return
       try {
         term.clearTextureAtlas()
-        if (container.clientWidth > 0 && container.clientHeight > 0) fit.fit()
+        this.fitEntry(entry) // fit + re-anchor; font-swap reflow must not drift off bottom
         term.refresh(0, term.rows - 1)
       } catch {
         /* terminal torn down between scheduling and running this callback */
@@ -263,41 +300,80 @@ export class TerminalPool {
       }, SCROLLBACK_DEBOUNCE_MS)
     }
 
-    ;(async () => {
-      const unOut = await listen<string>(`terminal-output-${sessionId}`, (e) => {
-        term.write(e.payload)
-        scheduleSave()
-      })
-      const unClosed = await listen(`terminal-closed-${sessionId}`, () =>
-        term.write(`\r\n\x1b[90m[${this.cfg.closedNotice}]\x1b[0m\r\n`)
-      )
-      if (entry.disposed) {
-        unOut()
-        unClosed()
-        return
-      }
-      entry.unlisten.push(unOut, unClosed)
-
-      // Show this session's prior output (read-only; the live shell below is new).
-      try {
-        const hist = await loadScrollback(sessionId)
-        if (hist && !entry.disposed) {
-          term.write(hist)
-          term.write('\r\n\x1b[90m── 이전 기록 (세션은 새로 시작됨) ──\x1b[0m\r\n')
+    // Restore scrollback + start the shell — but only once the pane is actually
+    // shown at a real size (see Entry.hydrate). Writing into a 0-size hidden
+    // terminal corrupts the wrap/scroll state, which is why background tabs looked
+    // scrolled-up (and wheel-stuck) when first opened. fitEntry() triggers this.
+    entry.hydrate = () => {
+      entry.hydrate = null
+      ;(async () => {
+        const unOut = await listen<string>(`terminal-output-${sessionId}`, (e) => {
+          // Follow the bottom AFTER the chunk is parsed (write callback), not
+          // before — scrolling before parse lands on the old buffer end. Gated on
+          // pinBottom so a user reading history isn't yanked down.
+          term.write(e.payload, () => this.stickBottom(entry))
+          scheduleSave()
+        })
+        const unClosed = await listen(`terminal-closed-${sessionId}`, () =>
+          term.write(`\r\n\x1b[90m[${this.cfg.closedNotice}]\x1b[0m\r\n`)
+        )
+        if (entry.disposed) {
+          unOut()
+          unClosed()
+          return
         }
-      } catch {
-        /* no prior scrollback */
-      }
+        entry.unlisten.push(unOut, unClosed)
 
-      try {
-        await startTerminalSession(sessionId, serverId)
-        await resizeTerminal(sessionId, term.cols, term.rows)
-      } catch (err) {
-        term.write(`\r\n\x1b[31m${this.cfg.connectFail}: ${err}\x1b[0m\r\n`)
-      }
-    })()
+        // Show this session's prior output (read-only; the live shell below is new).
+        try {
+          const hist = await loadScrollback(sessionId)
+          if (hist && !entry.disposed) {
+            term.write(hist)
+            // scrollToBottom must run once the restored buffer is actually parsed,
+            // so anchor it in the separator write's callback (writes are async).
+            term.write('\r\n\x1b[90m── 이전 기록 (세션은 새로 시작됨) ──\x1b[0m\r\n', () => {
+              entry.pinBottom = true
+              this.stickBottom(entry)
+            })
+          }
+        } catch {
+          /* no prior scrollback */
+        }
+
+        try {
+          await startTerminalSession(sessionId, serverId)
+          await resizeTerminal(sessionId, term.cols, term.rows)
+        } catch (err) {
+          term.write(`\r\n\x1b[31m${this.cfg.connectFail}: ${err}\x1b[0m\r\n`)
+        }
+
+        // xterm doesn't draw a terminal's cursor until it has been focused once,
+        // so an unfocused split pane on restore showed no (hollow) cursor until
+        // the user clicked into it. Give every freshly-hydrated pane one focus/blur
+        // cycle to initialize its cursor render, then restore focus to whoever had
+        // it (the focus effect focuses the active pane; siblings stay hollow).
+        if (!entry.disposed && !term.textarea?.matches(':focus')) {
+          const prev = this.focused
+          term.focus()
+          term.blur()
+          if (prev && prev !== sessionId) this.entries.get(prev)?.term.focus()
+        }
+      })()
+    }
 
     return entry
+  }
+
+  /** Scroll to the bottom if the viewport is pinned there, suppressing the
+   *  onScroll reaction so our own scroll never flips the pin off. */
+  private stickBottom(e: Entry) {
+    if (!e.pinBottom || e.disposed) return
+    e.reflowing = true
+    try {
+      e.term.scrollToBottom()
+    } finally {
+      e.reflowing = false
+    }
   }
 
   /** Ensure a session exists and reparent its container into `parent`. */
@@ -308,9 +384,27 @@ export class TerminalPool {
     this.refit(sessionId)
   }
 
+  /** Fit an entry to its container and keep the viewport pinned to the bottom
+   *  unless the user has scrolled up. Every fit path (this.fit, ResizeObserver,
+   *  webfont-swap) must go through here, or a reflow drifts the scroll off bottom. */
+  private fitEntry(e: Entry) {
+    if (e.container.clientWidth <= 0 || e.container.clientHeight <= 0) return
+    const stick = e.pinBottom
+    e.reflowing = true // suppress onScroll reacting to the reflow/scroll we're about to cause
+    try {
+      e.fit.fit()
+      if (stick) e.term.scrollToBottom()
+    } finally {
+      e.reflowing = false
+    }
+    // First time this pane has a real size: restore scrollback + start the shell
+    // now, into a correctly-sized terminal (never while hidden).
+    if (e.hydrate) e.hydrate()
+  }
+
   fit(sessionId: string) {
     const e = this.entries.get(sessionId)
-    if (e && e.container.clientWidth > 0 && e.container.clientHeight > 0) e.fit.fit()
+    if (e) this.fitEntry(e)
   }
 
   /** Fit now and again next frame — a freshly reparented/shown container may not
@@ -403,6 +497,9 @@ export class TerminalPool {
         clearTimeout(e.saveTimer)
         e.saveTimer = null
       }
+      // Never-hydrated tabs have an empty buffer; serializing it would clobber
+      // their still-valid saved history with nothing.
+      if (e.hydrate) continue
       saveScrollback(id, e.serialize.serialize({ scrollback: SCROLLBACK_LINES })).catch(() => {})
     }
   }
