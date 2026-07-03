@@ -2,13 +2,20 @@
 // across restarts, but the serialized output history is, so a restored terminal
 // shows what it printed before. Stored as one file per session id.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { scrollbackFileName } from './lib/scrollback'
 
 export class ScrollbackStore {
   constructor(private readonly dir: string) {
-    mkdirSync(dir, { recursive: true })
+    // 0700: scrollback captures on-screen output, which can contain secrets a
+    // user printed (tokens, `cat id_rsa`, env dumps). Keep it owner-only.
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    try {
+      chmodSync(dir, 0o700) // tighten a dir created before this (mkdir mode only applies on create)
+    } catch {
+      /* best-effort */
+    }
   }
 
   private pathFor(sessionId: string): string {
@@ -16,7 +23,8 @@ export class ScrollbackStore {
   }
 
   save(sessionId: string, data: string): void {
-    writeFileSync(this.pathFor(sessionId), data, 'utf8')
+    // 0600 for the same reason as the dir — never world-readable.
+    writeFileSync(this.pathFor(sessionId), data, { encoding: 'utf8', mode: 0o600 })
   }
 
   load(sessionId: string): string | null {

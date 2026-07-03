@@ -179,7 +179,12 @@ export function TerminalProvider({ children }: { children: React.ReactNode }) {
       tabs: tabs.map((t) => ({ root: serializeNode(t.root), name: t.name })),
       activeIndex,
     }
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify(data))
+    try {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify(data))
+    } catch {
+      // Persisting layout is best-effort — a quota/storage error must not throw
+      // out of render and blank the app.
+    }
   }, [tabs, activeTab])
 
   const openTab = useCallback((serverId: number | null, label: string) => {

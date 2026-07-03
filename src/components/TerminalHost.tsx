@@ -10,6 +10,7 @@ import { useTerminal, leaves, type DropSide } from '@/contexts/TerminalContext'
 import { useT } from '@/contexts/LanguageContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useShortcuts } from '@/contexts/ShortcutsContext'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { comboFromEvent } from '@/lib/shortcuts'
 import type { PaneNode, TerminalLeaf, TerminalTab } from '@/types/terminal'
 
@@ -283,6 +284,12 @@ function LeafView({ leaf, ctx }: { leaf: TerminalLeaf; ctx: NodeCtx }) {
 function SplitView({ split, ctx }: { split: Extract<PaneNode, { type: 'split' }>; ctx: NodeCtx }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const isRow = split.direction === 'row'
+  // While a divider is dragged we render from local sizes and commit to context
+  // only on mouseup. Committing on every mousemove would rewrite the whole tab
+  // tree, re-serialize the layout to localStorage, and refit every pane — dozens
+  // of times per second. Flex handles the live visual resize from these sizes.
+  const [dragSizes, setDragSizes] = useState<number[] | null>(null)
+  const sizes = dragSizes ?? split.sizes
 
   const startDrag = (i: number, e: React.MouseEvent) => {
     e.preventDefault()
@@ -291,18 +298,22 @@ function SplitView({ split, ctx }: { split: Extract<PaneNode, { type: 'split' }>
     const total = isRow ? container.clientWidth : container.clientHeight
     const startPos = isRow ? e.clientX : e.clientY
     const start = [...split.sizes]
+    let latest = start
     const onMove = (ev: MouseEvent) => {
       const pos = isRow ? ev.clientX : ev.clientY
       let delta = ((pos - startPos) / total) * 100
       delta = Math.max(-(start[i] - 10), Math.min(start[i + 1] - 10, delta))
-      const sizes = [...start]
-      sizes[i] = start[i] + delta
-      sizes[i + 1] = start[i + 1] - delta
-      ctx.onResize(split.id, sizes)
+      const next = [...start]
+      next[i] = start[i] + delta
+      next[i + 1] = start[i + 1] - delta
+      latest = next
+      setDragSizes(next)
     }
     const onUp = () => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
+      setDragSizes(null)
+      ctx.onResize(split.id, latest) // single commit → one refit + one save
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
@@ -314,7 +325,7 @@ function SplitView({ split, ctx }: { split: Extract<PaneNode, { type: 'split' }>
         <Fragment key={nodeKey(child)}>
           <div
             className="relative min-w-0 min-h-0 overflow-hidden"
-            style={{ flexBasis: `${split.sizes[i]}%`, flexGrow: 0, flexShrink: 0 }}
+            style={{ flexBasis: `${sizes[i]}%`, flexGrow: 0, flexShrink: 0 }}
           >
             <PaneNodeView node={child} ctx={ctx} />
           </div>
@@ -338,6 +349,7 @@ function PaneNodeView({ node, ctx }: { node: PaneNode; ctx: NodeCtx }) {
 
 export default function TerminalHost() {
   const { t } = useT()
+  const confirm = useConfirm()
   const { shortcuts } = useShortcuts()
   const location = useLocation()
   const visible = location.pathname === '/terminal'
@@ -665,20 +677,23 @@ export default function TerminalHost() {
   const paneCount = (tab: TerminalTab) => leaves(tab.root).length
 
   // Closing a tab with a remote session or multiple panes asks for confirmation.
-  const doCloseTab = (tabId: string) => {
+  const askClose = (message: string) =>
+    confirm({ title: t('term.confirmCloseTitle'), message, confirmLabel: t('term.confirmCloseAction'), danger: true })
+
+  const doCloseTab = async (tabId: string) => {
     const tab = tabs.find((tb) => tb.id === tabId)
     if (!tab) return
     const ls = leaves(tab.root)
     const risky = ls.length > 1 || ls.some((l) => l.serverId != null)
-    if (!risky || window.confirm(t('term.confirmCloseTab'))) closeTab(tabId)
+    if (!risky || (await askClose(t('term.confirmCloseTab')))) closeTab(tabId)
   }
-  const doCloseOthers = (tabId: string) => {
-    if (tabs.length > 1 && window.confirm(t('term.confirmCloseOthers'))) closeOthers(tabId)
+  const doCloseOthers = async (tabId: string) => {
+    if (tabs.length > 1 && (await askClose(t('term.confirmCloseOthers')))) closeOthers(tabId)
     setTabMenu(null)
   }
-  const doCloseRight = (tabId: string) => {
+  const doCloseRight = async (tabId: string) => {
     const idx = tabs.findIndex((tb) => tb.id === tabId)
-    if (idx >= 0 && idx < tabs.length - 1 && window.confirm(t('term.confirmCloseRight'))) closeToRight(tabId)
+    if (idx >= 0 && idx < tabs.length - 1 && (await askClose(t('term.confirmCloseRight')))) closeToRight(tabId)
     setTabMenu(null)
   }
 

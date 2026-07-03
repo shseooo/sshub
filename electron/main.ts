@@ -192,10 +192,27 @@ function startSession(sender: WebContents, sessionId: string, serverId: number |
     env: process.env as Record<string, string>,
   })
   if (banner && !sender.isDestroyed()) sender.send(`terminal-output-${sessionId}`, banner)
+
+  // Coalesce PTY output: node-pty emits many small chunks for bursty output
+  // (build logs, `cat` of a big file), and one IPC message per chunk floods the
+  // renderer. Buffer within a tick and flush once, cutting message count by
+  // orders of magnitude while keeping latency imperceptible.
+  let buf = ''
+  let flushTimer: ReturnType<typeof setTimeout> | null = null
+  const flush = () => {
+    flushTimer = null
+    if (buf === '' || sender.isDestroyed()) return
+    const out = buf
+    buf = ''
+    sender.send(`terminal-output-${sessionId}`, out)
+  }
   p.onData((d) => {
-    if (!sender.isDestroyed()) sender.send(`terminal-output-${sessionId}`, d)
+    buf += d
+    if (!flushTimer) flushTimer = setTimeout(flush, 8)
   })
   p.onExit(() => {
+    if (flushTimer) clearTimeout(flushTimer)
+    flush() // deliver any buffered tail before the closed notice
     if (!sender.isDestroyed()) sender.send(`terminal-closed-${sessionId}`, null)
     sessions.delete(sessionId)
   })
@@ -426,4 +443,18 @@ app.on('window-all-closed', async () => {
   await captureCwds() // snapshot local cwds before the shells die so reopen restores them
   killAllSessions()
   if (process.platform !== 'darwin') app.quit()
+})
+
+// Catch-all for the quit paths window-all-closed doesn't cover (e.g. Cmd+Q with
+// the window still open, or app.quit()), so PTYs — especially SSH — never linger.
+app.on('before-quit', () => killAllSessions())
+
+// A stray exception or rejection in a callback (pty.onData, fire-and-forget IPC)
+// must not silently take down the main process and every session with it. Log
+// and keep running.
+process.on('uncaughtException', (err) => {
+  console.error('uncaughtException in main process:', err)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('unhandledRejection in main process:', reason)
 })
