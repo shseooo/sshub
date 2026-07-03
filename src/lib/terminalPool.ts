@@ -3,7 +3,6 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
-import { WebglAddon } from '@xterm/addon-webgl'
 import { listen, loadScrollback, saveScrollback, deleteScrollback, openExternal, revealPath } from '@/lib/bridge'
 import { findFilePaths } from '@/lib/filePaths'
 import { trimSelectionTrailing } from '@/lib/selection'
@@ -66,11 +65,10 @@ const SEARCH_DECORATIONS = {
 
 const FONT = '"IBM Plex Mono", Menlo, Monaco, "Courier New", monospace'
 
-// IBM Plex Mono arrives asynchronously (Google Fonts @import, display=swap). The
-// WebGL/canvas renderer bakes glyphs into a texture atlas at open() time; if the
-// web font has not loaded yet it bakes the fallback font's metrics and never
-// notices the later font swap, so text stays garbled until a resize rebuilds the
-// atlas. Resolve once the real font is ready so each terminal can rebuild itself.
+// IBM Plex Mono arrives asynchronously (Google Fonts @import, display=swap).
+// xterm measures the char-cell size at open() using whatever font is available;
+// if the web font lands later, the grid/cursor can be mis-measured until a
+// re-measure. Resolve once the real font is ready so each terminal can re-fit.
 const fontReady: Promise<void> = (async () => {
   try {
     await document.fonts.load('16px "IBM Plex Mono"')
@@ -104,28 +102,6 @@ export class TerminalPool {
 
   constructor(cfg: PoolConfig) {
     this.cfg = cfg
-    // macOS can corrupt the WebGL glyph atlas while the window is occluded or the
-    // GPU sleeps — glyphs render as garbage tiles until something rebuilds the
-    // atlas (historically: a manual window resize). The context is not reported
-    // lost in this case, so rebake every atlas whenever the app returns to the
-    // foreground; it's cheap and glyphs re-rasterize lazily.
-    window.addEventListener('focus', this.rebakeAtlases)
-    document.addEventListener('visibilitychange', this.onVisibilityChange)
-  }
-
-  private rebakeAtlases = () => {
-    for (const e of this.entries.values()) {
-      try {
-        e.term.clearTextureAtlas()
-        e.term.refresh(0, e.term.rows - 1)
-      } catch {
-        /* terminal mid-teardown */
-      }
-    }
-  }
-
-  private onVisibilityChange = () => {
-    if (document.visibilityState === 'visible') this.rebakeAtlases()
   }
 
   private create(sessionId: string, serverId: number | null): Entry {
@@ -203,35 +179,22 @@ export class TerminalPool {
       })
     )
 
-    // GPU renderer for fast large-output scrolling. A GPU reset (sleep/wake,
-    // driver restart) drops the WebGL context; instead of permanently falling
-    // back to the slow DOM renderer, try to re-acquire a fresh context a few
-    // times. Each attempt rebuilds the glyph atlas from scratch, so a reset
-    // also recovers any atlas corruption.
-    let webglRetries = 0
-    const loadWebgl = () => {
-      try {
-        const webgl = new WebglAddon()
-        webgl.onContextLoss(() => {
-          webgl.dispose()
-          if (!entry.disposed && webglRetries++ < 3) setTimeout(loadWebgl, 1000)
-        })
-        term.loadAddon(webgl)
-      } catch {
-        /* WebGL unavailable → xterm keeps its DOM renderer */
-      }
-    }
-    loadWebgl()
+    // Renderer: xterm's default DOM renderer. We deliberately do NOT use the
+    // WebGL addon — each terminal would own a GPU context, browsers cap those
+    // (~16), and creating/closing terminals force-loses older contexts, which
+    // corrupted other terminals' glyph atlases (garbled text). The DOM renderer
+    // has no atlas and no GL context, so glyph corruption is impossible; it's
+    // slightly slower on huge bursts, which is a non-issue for an SSH manager.
 
-    // When the web font finally lands, drop the atlas that was baked with the
-    // fallback font and remeasure, so the first render after the swap is crisp
-    // without the user having to resize the window. Resolves immediately for
-    // every terminal created after the font is already cached.
+    // The web font (IBM Plex Mono) arrives asynchronously. The DOM renderer draws
+    // real text so nothing garbles, but the char-cell size measured at open() used
+    // the fallback font; re-measure + re-fit once the real font lands so the grid
+    // and cursor line up. Resolves immediately when the font is already cached.
     fontReady.then(() => {
       if (entry.disposed) return
       try {
-        term.clearTextureAtlas()
-        this.fitEntry(entry) // fit + re-anchor; font-swap reflow must not drift off bottom
+        term.options.fontFamily = FONT // reassign to force a char-size remeasure
+        this.fitEntry(entry) // re-fit to the new metrics (keeps bottom-pinned)
         term.refresh(0, term.rows - 1)
       } catch {
         /* terminal torn down between scheduling and running this callback */
@@ -505,8 +468,6 @@ export class TerminalPool {
   }
 
   disposeAll() {
-    window.removeEventListener('focus', this.rebakeAtlases)
-    document.removeEventListener('visibilitychange', this.onVisibilityChange)
     for (const [id, e] of this.entries) this.disposeEntry(id, e)
   }
 }
