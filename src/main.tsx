@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import ErrorBoundary from './components/ErrorBoundary'
+import { ConfirmProvider } from './components/ui/ConfirmDialog'
 import { LanguageProvider } from './contexts/LanguageContext'
 import { ShortcutsProvider } from './contexts/ShortcutsContext'
 import { ThemeProvider } from './contexts/ThemeContext'
@@ -29,9 +30,11 @@ createRoot(document.getElementById('root')!).render(
         <ThemeProvider>
           <ShortcutsProvider>
             <QueryClientProvider client={queryClient}>
-              <BrowserRouter>
-                <App />
-              </BrowserRouter>
+              <ConfirmProvider>
+                <BrowserRouter>
+                  <App />
+                </BrowserRouter>
+              </ConfirmProvider>
             </QueryClientProvider>
           </ShortcutsProvider>
         </ThemeProvider>

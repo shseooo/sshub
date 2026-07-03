@@ -4,6 +4,7 @@ import { Plus, Pencil, Trash2, Star, Terminal } from 'lucide-react'
 import { useDeleteServer, useServers, useToggleFavorite } from '@/hooks/useServers'
 import { useT } from '@/contexts/LanguageContext'
 import { Select } from '@/components/Select'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 export default function ServerList() {
   const navigate = useNavigate()
@@ -12,6 +13,7 @@ export default function ServerList() {
   const { data: servers = [], isLoading } = useServers()
   const deleteServer = useDeleteServer()
   const toggleFavorite = useToggleFavorite()
+  const confirm = useConfirm()
 
   const [search, setSearch] = useState('')
   const [group, setGroup] = useState('')
@@ -31,10 +33,14 @@ export default function ServerList() {
     })
   }, [servers, search, group])
 
-  const handleDelete = (id: number) => {
-    if (confirm(t('list.confirmDelete'))) {
-      deleteServer.mutate(id)
-    }
+  const handleDelete = async (id: number) => {
+    const ok = await confirm({
+      title: t('list.confirmDeleteTitle'),
+      message: t('list.confirmDelete'),
+      confirmLabel: t('common.delete'),
+      danger: true,
+    })
+    if (ok) deleteServer.mutate(id)
   }
 
   return (

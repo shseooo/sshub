@@ -6,6 +6,7 @@ import { useCreateSshKey, useDeleteSshKey, useImportSshKey, useUpdateSshKey, use
 import { loadKeyFile, derivePublicKeyFromPem, changeKeyPassphrase } from '@/lib/commands'
 import { useT } from '@/contexts/LanguageContext'
 import { Select } from '@/components/Select'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 import type { SshKey, KeyType } from '@/types/key'
 
 function detectKeyType(publicKey: string): KeyType | null {
@@ -568,15 +569,20 @@ function KeyCard({ keyData, onEdit }: { keyData: SshKey; onEdit: () => void }) {
   const { t } = useT()
   const [isVisible, setIsVisible] = useState(false)
   const deleteKey = useDeleteSshKey()
+  const confirm = useConfirm()
 
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text)
   }
 
-  const handleDelete = () => {
-    if (confirm(t('keys.confirmDelete', { name: keyData.name }))) {
-      deleteKey.mutate(keyData.id)
-    }
+  const handleDelete = async () => {
+    const ok = await confirm({
+      title: t('keys.confirmDeleteTitle'),
+      message: t('keys.confirmDelete', { name: keyData.name }),
+      confirmLabel: t('common.delete'),
+      danger: true,
+    })
+    if (ok) deleteKey.mutate(keyData.id)
   }
 
   return (
