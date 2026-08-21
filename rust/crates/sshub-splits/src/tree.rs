@@ -243,11 +243,15 @@ pub fn rename_leaf(node: PaneNode, session_id: &SessionId, label: &str) -> PaneN
 fn find_split_mut<'a>(node: &'a mut PaneNode, split_id: &SplitId) -> Option<&'a mut TerminalSplit> {
     match node {
         PaneNode::Leaf(_) => None,
-        PaneNode::Split(s) if s.id == *split_id => Some(s),
-        PaneNode::Split(s) => s
-            .children
-            .iter_mut()
-            .find_map(|c| find_split_mut(c, split_id)),
+        PaneNode::Split(s) => {
+            if s.id == *split_id {
+                Some(s)
+            } else {
+                s.children
+                    .iter_mut()
+                    .find_map(|c| find_split_mut(c, split_id))
+            }
+        }
     }
 }
 
