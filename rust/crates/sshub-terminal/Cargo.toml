@@ -13,3 +13,6 @@ anyhow.workspace = true
 libc.workspace = true
 serde.workspace = true
 regex.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

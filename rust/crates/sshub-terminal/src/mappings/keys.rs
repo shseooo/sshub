@@ -87,6 +87,11 @@ pub fn to_esc_str(ks: &Keystroke, mode: TermMode, alt_is_meta: bool) -> Option<S
         ("backspace", Mods::Ctrl) => Some("\x08"),
         ("backspace", Mods::Alt) => Some("\x1b\x7f"),
         ("space", Mods::Ctrl) => Some("\x00"),
+        // 스페이스는 명시한다 — 플랫폼이 `key_char`를 채워 주는 것에만 기대면
+        // 레이아웃/조합에 따라 입력이 통째로 사라진다.
+        ("space", Mods::None) => Some(" "),
+        ("space", Mods::Shift) => Some(" "),
+        ("space", Mods::Alt) if alt_is_meta => Some("\x1b "),
 
         // alt-screen(TUI) 안에서는 shift+이동키가 앱으로 전달되어야 한다.
         ("home", Mods::Shift) if alt_screen => Some("\x1b[1;2H"),
