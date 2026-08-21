@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/sshub-core",
+  "crates/sshub-splits",
+  "crates/sshub-terminal",
+  "crates/sshub",
+]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+sshub-core = { path = "crates/sshub-core" }
+sshub-splits = { path = "crates/sshub-splits" }
+sshub-terminal = { path = "crates/sshub-terminal" }
+
+gpui = "0.2.2"
+# upstream 사용; 문제 시 아래 한 줄로 Zed 포크 스왑 (DESIGN-terminal.md §1)
+# alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
+alacritty_terminal = "0.26"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+scrypt = { version = "0.11", default-features = false }
+aes-gcm = "0.10"
+base64 = "0.22"
+thiserror = "2"
+anyhow = "1"
+dirs = "6"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+libc = "0.2"
+parking_lot = "0.12"
+futures = "0.3"
+smol = "2"
+uuid = { version = "1", features = ["v4"] }
+tempfile = "3"
+
+[profile.dev]
+# gpui는 dev에서도 최소 최적화가 없으면 느림 (Zed 관례)
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
