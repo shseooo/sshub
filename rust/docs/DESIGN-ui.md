@@ -152,3 +152,67 @@ struct AppStateHandle(Entity<AppState>); impl Global for AppStateHandle {}
 빌드 순서: theme+settings+i18n → 셸/사이드바/라우팅 → Button/Checkbox/List/Modal →
 ServerList+Dashboard(텍스트 입력 불필요) → TextInput → ServerEdit+KeyManager → Select →
 Settings+리바인드 → 터미널 호스트 통합.
+
+---
+
+## 9. 구현 노트 — gpui 0.2.2 실측 (위젯 킷 구현 중 발견)
+
+`crates/sshub/src/ui/` 구현 시 레지스트리 소스(`gpui-0.2.2/`)를 grep해 확인한 것들.
+docs.rs만 보고 추정했던 것과 다른 지점 위주.
+
+### 텍스트 레이아웃
+
+- `TextSystem::shape_text(text, font_size, runs, wrap_width, line_clamp)` — **인자 5개**,
+  반환 `Result<SmallVec<[WrappedLine; 1]>>`. `'\n'` 기준으로 하드 라인당 `WrappedLine` 1개.
+  `runs`의 `len` 합은 개행 포함 전체 텍스트 길이여야 한다.
+- `WrappedLine`은 `WrappedLineLayout`으로 Deref. 쓸모 있는 메서드:
+  - `position_for_index(index, line_height) -> Option<Point<Pixels>>` (라인 로컬 좌표)
+  - `closest_index_for_position(pos, line_height) -> Result<usize, usize>`
+    — **Err에도 클램프된 인덱스가 들어 있다** → `.unwrap_or_else(|ix| ix)`
+  - `wrap_boundaries` / `size(line_height)` (높이 = `line_height * (wrap_boundaries.len()+1)`)
+- `WrappedLine::paint(origin, line_height, TextAlign, Option<Bounds>, window, cx)` —
+  `ShapedLine::paint(origin, line_height, window, cx)`보다 인자 2개 많다.
+- 수동 스크롤 클리핑은 `window.with_content_mask(Some(ContentMask { bounds }), |window| …)`.
+
+### Element / 입력
+
+- `Element::{request_layout, prepaint, paint}`의 2번째 인자는
+  `Option<&InspectorElementId>` (0.2.2에서 추가됨).
+- `ElementInputHandler::new(bounds, entity)`는 **매 프레임 `paint`에서**
+  `window.handle_input(&focus_handle, …, cx)`로 다시 등록해야 IME가 붙는다.
+- `Context::on_focus_out(&handle, window, |this, FocusOutEvent, window, cx| …)`는
+  `Subscription`을 반환한다 — 뷰에 보관하지 않으면 즉시 드랍되어 동작하지 않는다.
+  (`Blurred` 이벤트가 이걸로 구현됨.)
+- `unicode-segmentation`은 examples/input.rs가 쓰지만 gpui 재수출이 아니다.
+  워크스페이스 의존을 늘리지 않으려고 grapheme 대신 **char 경계**를 쓴다
+  (한글/CJK/라틴 동일, ZWJ 이모지 시퀀스만 문자 단위로 쪼개짐).
+
+### 액션 / 키맵
+
+- `actions!(namespace, [ … ])` — 액션 이름은 네임스페이스 단위로 전역 유일해야 하고
+  중복 등록은 `App` 생성 시 panic. TextInput/TextArea가 `backspace`·`left` 등
+  같은 키를 다른 컨텍스트로 쓰므로 **위젯마다 별도 네임스페이스**가 필요하다
+  (`sshub_text_input` / `sshub_text_area` / `sshub_select` / `sshub_confirm_dialog`).
+- `KeyBinding::new(keystrokes, action, Option<&str>)` — 컨텍스트가 3번째 인자.
+- 전체 위젯 바인딩은 `ui::init(cx)` 한 함수에만 있다. `clear_key_bindings()`가
+  전역 키맵을 통째로 비우므로 keymap.rs는 clear → `ui::init` → 사용자 바인딩 순서로 재빌드.
+
+### 스타일 / 오버레이
+
+- `overflow_y_scroll()`은 `StatefulInteractiveElement` — **`.id()` 먼저** 붙여야 한다.
+- `Styled`에 `visible()`/`invisible()`이 **없다**. ListItem의 trailing 액션은
+  `group()` + `group_hover(name, …)`로 **색 전환**(dim → text)으로 처리했다.
+- `deferred(child).with_priority(n)` + `anchored().snap_to_window_with_margin(px(8.))`
+  (`Pixels: Into<Edges<Pixels>>` 성립). `anchored()`는 자기가 레이아웃된 자리에
+  붙으므로 드롭다운은 `.offset(point(px(0.), 트리거_높이))`가 필요하다.
+- `gpui::rgba(hex: u32)`는 **0xRRGGBBAA**(알파가 하위 바이트). `impl From<Rgba> for Hsla`가
+  있으므로 반투명 루트 bg는 `Hsla::from(rgba((rgb << 8) | alpha))`로 굽는다.
+- `svg()`의 path는 `AssetSource`(`Application::with_assets`)를 통해 해석된다.
+  위젯 킷이 앱 부트스트랩에 의존하지 않도록 v1 아이콘은 **유니코드 글리프**
+  (`ui::icon::Icon::glyph()`). assets.rs가 생기면 `Icon::path()`로 승격.
+
+### 보안 결정
+
+- masked TextInput은 **Copy/Cut을 클립보드로 내보내지 않는다**(패스프레이즈 유출 방지).
+  편집·IME·삭제는 실제 텍스트로 정상 동작하고, 화면 오프셋만
+  `mask_offset`/`unmask_offset`(문자 인덱스 × 3바이트)으로 매핑한다.
