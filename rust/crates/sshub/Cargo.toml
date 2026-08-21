@@ -15,3 +15,6 @@ anyhow.workspace = true
 parking_lot.workspace = true
 futures.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

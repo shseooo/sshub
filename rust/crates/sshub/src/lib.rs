@@ -4,5 +4,6 @@
 
 pub mod i18n;
 pub mod keymap;
+pub mod session;
 pub mod state;
 pub mod theme;
