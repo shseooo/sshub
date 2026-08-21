@@ -170,7 +170,8 @@ mod tests {
 
     #[test]
     fn starts_empty_when_the_file_is_absent_or_corrupt() {
-        let (dir, path) = setup();
+        // `_dir`은 TempDir 가드 — 이름을 붙여 두지 않으면 즉시 drop되어 디렉터리가 사라진다.
+        let (_dir, path) = setup();
         let mut s = TerminalCwdStore::new(path.clone());
         s.load(); // 파일이 아직 없다
         assert_eq!(s.get("s1"), None);

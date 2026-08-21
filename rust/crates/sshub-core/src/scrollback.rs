@@ -4,7 +4,7 @@
 
 use std::fs::{self, DirBuilder, Permissions};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::error::CoreError;
 use crate::fsutil::{rm_force, write_0600};
