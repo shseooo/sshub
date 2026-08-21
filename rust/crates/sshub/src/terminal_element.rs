@@ -575,6 +575,12 @@ impl Element for TerminalElement {
         // 프레임당 lock 1회: 크기 반영 + 스냅샷.
         let (content, matches, hovered) = self.terminal.update(cx, |terminal, cx| {
             terminal.set_size(terminal_bounds);
+            // 첫 실제 레이아웃 = hydration 완료 (DESIGN-terminal.md §7).
+            // 이 플래그가 서야 세션 계층이 스크롤백을 저장한다 — 한 번도 뜨지
+            // 않은 터미널의 빈 버퍼가 저장된 히스토리를 덮어쓰지 않게 하는 게이트.
+            if !terminal.hydrated && terminal_bounds.screen_lines() > 1 {
+                terminal.hydrated = true;
+            }
             terminal.sync(cx);
             (
                 terminal.last_content.clone(),

@@ -7,11 +7,12 @@
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use gpui::{
     div, App, AppContext, Bounds, ClipboardItem, Context, Entity, EntityInputHandler, EventEmitter,
-    FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
-    Pixels, Render, Styled, Subscription, UTF16Selection, Window,
+    FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, KeyDownEvent, Keystroke,
+    ParentElement, Pixels, Render, Styled, Subscription, UTF16Selection, Window,
 };
 use sshub_terminal::{Event as TerminalEvent, LinkTarget, SpawnSpec, Terminal, TerminalBuilder};
 
@@ -30,6 +31,20 @@ struct ImeState {
     selection: Range<usize>,
 }
 
+/// 이 뷰가 **방금 자기 터미널로 보낸** 입력. 브로드캐스트(동시 입력)를 켠
+/// 워크스페이스가 같은 탭의 나머지 pane에 복제한다 (DESIGN-terminal.md §6).
+/// 포커스된 pane이 커서/IME를 소유하고, 복제는 그 결과만 따라간다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BroadcastInput {
+    Keystroke(Keystroke),
+    /// IME 확정 등 그대로 써야 하는 텍스트.
+    Text(String),
+    /// 붙여넣기 — 대상 터미널에서도 bracketed-paste로 감싼다.
+    Paste(String),
+}
+
+pub type BroadcastSink = Rc<dyn Fn(&BroadcastInput, &mut App)>;
+
 pub struct TerminalView {
     terminal: Entity<Terminal>,
     focus_handle: FocusHandle,
@@ -39,6 +54,7 @@ pub struct TerminalView {
     last_bounds: Option<Bounds<Pixels>>,
     /// 로컬 세션인가 — 경로 링크(Finder 열기)는 로컬에서만 의미가 있다.
     local: bool,
+    broadcast: Option<BroadcastSink>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -56,21 +72,39 @@ impl TerminalView {
         // PTY spawn은 호출 스레드(= 메인)에서 일어난다.
         let builder = TerminalBuilder::new(spec)?;
         let terminal = cx.new(|cx| builder.subscribe(cx));
+        Ok(Self::from_terminal(terminal, cx))
+    }
+
+    /// 이미 살아 있는 터미널에 뷰를 붙인다. 세션 레지스트리가 엔티티를 **앱
+    /// 스코프**로 소유하므로(§6·§8) 창/탭을 옮겨도 같은 PTY를 계속 본다.
+    pub fn from_terminal(terminal: Entity<Terminal>, cx: &mut Context<Self>) -> TerminalView {
         let focus_handle = cx.focus_handle();
         let subscriptions = vec![
             cx.subscribe(&terminal, Self::on_terminal_event),
             // 터미널이 notify하면(그리드 변경) 뷰도 다시 그린다.
             cx.observe(&terminal, |_, _, cx| cx.notify()),
         ];
-        Ok(TerminalView {
+        TerminalView {
             terminal,
             focus_handle,
             ime: None,
             font_family: DEFAULT_FONT_FAMILY.to_string(),
             last_bounds: None,
             local: true,
+            broadcast: None,
             _subscriptions: subscriptions,
-        })
+        }
+    }
+
+    /// 이 뷰가 보낸 입력을 넘겨받을 싱크 (동시 입력). `None`이면 복제하지 않는다.
+    pub fn set_broadcast(&mut self, sink: Option<BroadcastSink>) {
+        self.broadcast = sink;
+    }
+
+    fn emit_broadcast(&self, input: BroadcastInput, cx: &mut App) {
+        if let Some(sink) = &self.broadcast {
+            sink(&input, cx);
+        }
     }
 
     pub fn terminal(&self) -> &Entity<Terminal> {
@@ -164,6 +198,7 @@ impl TerminalView {
             .terminal
             .update(cx, |terminal, _| terminal.try_keystroke(keystroke, true));
         if handled {
+            self.emit_broadcast(BroadcastInput::Keystroke(keystroke.clone()), cx);
             cx.notify();
         }
     }
@@ -181,6 +216,7 @@ impl TerminalView {
             return;
         };
         self.terminal.update(cx, |terminal, _| terminal.paste(&text));
+        self.emit_broadcast(BroadcastInput::Paste(text), cx);
         cx.notify();
     }
 
@@ -305,6 +341,7 @@ impl EntityInputHandler for TerminalView {
         if !text.is_empty() {
             self.terminal
                 .update(cx, |terminal, _| terminal.input(text.as_bytes().to_vec()));
+            self.emit_broadcast(BroadcastInput::Text(text.to_string()), cx);
         }
         cx.notify();
     }

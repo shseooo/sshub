@@ -244,4 +244,66 @@ detach_pane(leaves>1 필수, boundary 삽입), merge_tab(root 전체 graft), rec
   `Terminal::set_matches`)과 매치 rect 렌더링은 준비되어 있다.
 - 스크롤백 **디바운스 저장**(1500ms)과 `hydrated` 게이트를 실제로 소비하는
   세션 계층 (`Terminal::hydrated`/`serialize_scrollback_for_disk`는 노출됨).
+  → **완료**(아래 "워크스페이스 계층" 참조).
 - 브로드캐스트, 분할/탭 UI, 다중 창 (§5·§6·§8).
+  → 브로드캐스트·분할/탭 UI **완료**, 다중 창은 여전히 미구현.
+
+---
+
+## 12. 워크스페이스 계층 구현 노트 (2026-08-22, §5·§6·§7 UI)
+
+`session_registry.rs` / `split_view.rs` / `tab_bar.rs` / `terminal_workspace.rs`
+구현 중 설계와 달라진 지점.
+
+### gpui 0.2.2 추가 확인
+
+| 설계/가정 | 실제 |
+|---|---|
+| `Styled::cursor_*`에 `ColResize/RowResize` | 이름은 `CursorStyle::ResizeLeftRight` / `ResizeUpDown` (`.cursor(..)`로 지정). |
+| flex 비율을 `%` 폭으로 지정 | 퍼센트 폭 + 5px 디바이더는 매 split마다 오버플로한다. `style().flex_grow = Some(pct)` + `flex_basis: 0`으로 **남은 공간**을 비율 분배한다. |
+| 드롭 위치를 `on_drop` 인자에서 얻음 | `on_drop`은 페이로드만 준다. 위치는 `window.mouse_position()` + 프레임마다 `canvas`로 수집한 pane/탭 사각형(`WorkspaceGeometry`)으로 계산한다. |
+| `ClickEvent`로 더블클릭 | 0.2.2에서 enum이라 `MouseDownEvent.click_count >= 2`로 판정(§11과 동일 이유). |
+| 툴팁 | gpui에는 `tooltip(|_,_| AnyView)`만 있고 텍스트 툴팁 위젯이 없다 → 탭/버튼 툴팁은 생략. |
+
+### 설계에서 의도적으로 조정한 것
+
+- **스크롤백 직렬화 위치**: 설계는 "background에서 serialize"였으나
+  `Terminal::serialize_scrollback`은 엔티티 `&self`가 필요해 메인에서 직렬화하고
+  (1000행 상한, `FairMutex` 1회) **파일 쓰기만** `background_spawn`으로 보낸다.
+- **`hydrated`를 세우는 곳**: `TerminalElement::prepaint`에서 첫 실제 레이아웃
+  (`screen_lines() > 1`)에 `hydrated = true`. 레지스트리의 저장 경로는 이 값이
+  false면 건너뛴다 — 한 번도 보이지 않은 pane의 빈 그리드가 저장된 히스토리를
+  덮어쓰는 사고를 막는 유일한 게이트다.
+- **브로드캐스트 팬아웃 지점**: 설계는 "워크스페이스가 키를 가로채 복제"였지만
+  키·IME 확정·붙여넣기가 모두 `TerminalView`를 지나므로, 뷰에 선택적 싱크
+  (`TerminalView::set_broadcast`, `BroadcastInput::{Keystroke,Text,Paste}`)를 달고
+  워크스페이스가 **같은 탭의 나머지 leaf**에만 복제한다. IME 조합 중 텍스트는
+  여전히 어디로도 가지 않는다(확정 시 `Text`로 1회).
+- **cwd 상속원은 1회용**: `TerminalLeaf.cwd_from_session`은 세션 spawn 직후
+  워크스페이스가 지운다. 남겨 두면 재연결·복원 때 남의 디렉터리를 물려받는다.
+- **크로스 탭 pane 이동**: `move_pane`은 한 트리 안에서만 동작하므로 다른 탭으로
+  끌면 `detach_pane`(임시 탭) → `merge_tab` 조합으로 처리한다. 결과 트리는 TS
+  판과 같다.
+- **pane 드래그 소스**: pane 전체를 드래그 가능하게 하면 터미널 텍스트 선택과
+  충돌한다 → 우상단 14px 그립에서만 드래그가 시작된다.
+- **세션 레지스트리는 전역 상태를 직접 읽지 않는다**: 서버/키 목록은
+  `set_catalog`로 주입받는다(워크스페이스가 `StateEvent`에 맞춰 갱신). 덕분에
+  레지스트리 단위 테스트가 `AppState`/실제 홈 디렉터리 없이 돈다.
+- **레이아웃 영속 포맷**: `Settings.terminal_layout` = TS와 동일한
+  `{tabs, activeIndex}`. 세션 id는 보존(스크롤백/cwd 파일 키), 탭/split id는
+  `revive_ids`로 재발급. §8의 다중 창 레코드(`window_session::WindowRecord`)와
+  같은 키를 쓰므로, 다중 창을 켤 때 **어느 쪽이 최종 writer인지 정리**해야 한다.
+
+### 이 작업에서도 남은 것
+
+- 검색 **바 UI**: `TerminalWorkspace::{set_pane_search, clear_pane_search}`와
+  pane별 상태는 있으나 입력 UI와 enter/shift-enter 순환은 없다.
+- 서버 선택 팝오버(`term.pickNewTab`/`pickSplitRight`/`pickSplitDown`):
+  분할·새 탭은 항상 로컬 셸로 열린다. 서버 세션은
+  `TerminalWorkspace::open_server_tab(server_id, label, ..)` 진입점으로만.
+- pane 재연결/닫기의 **컨텍스트 메뉴**: `reconnect_pane`/`reconnect_tab`/
+  `close_other_tabs`/`close_tabs_to_the_right`는 공개 메서드로 있으나 이를 부르는
+  메뉴 UI가 없다(키맵에도 액션이 없다).
+- 다중 창(§8)과 `cmd-Q` 종료 순서 연결: `TerminalWorkspace::shutdown` /
+  `SessionRegistry::shutdown_all`(cwd 스냅샷 → flush → kill)은 준비됐지만
+  앱 라이프사이클에 아직 연결되지 않았다.
