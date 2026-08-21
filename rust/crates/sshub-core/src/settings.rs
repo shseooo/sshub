@@ -68,6 +68,9 @@ pub const START_PAGES: [&str; 5] = ["dashboard", "servers", "terminal", "keys", 
 
 /// 기존 앱의 단축키 기본값을 gpui Keystroke 표기로 옮긴 것
 /// (meta→cmd, KeyT→t, Equal→=, ArrowLeft→left …).
+///
+/// 수식어 순서는 gpui `Keystroke::unparse` 표기 `fn-ctrl-alt-cmd-shift-key`를
+/// 따른다 — 저장값끼리 문자열로 비교(충돌 검사)하려면 표기가 하나여야 한다.
 pub fn default_shortcuts() -> BTreeMap<String, String> {
     [
         ("newTab", "cmd-t"),
