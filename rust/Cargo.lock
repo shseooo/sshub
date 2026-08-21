@@ -5156,6 +5156,7 @@ dependencies = [
  "sshub-core",
  "sshub-splits",
  "sshub-terminal",
+ "tempfile",
  "uuid",
 ]
 
@@ -5193,6 +5194,7 @@ dependencies = [
  "gpui",
  "libc",
  "parking_lot",
+ "regex",
  "serde",
 ]
 

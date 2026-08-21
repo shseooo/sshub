@@ -182,3 +182,66 @@ detach_pane(leaves>1 필수, boundary 삽입), merge_tab(root 전체 graft), rec
   작은 헬퍼(CursorLayout, min-contrast)는 재구현.
 - alacritty upstream 격차: backend.rs로 격리, 한 줄 스왑.
 - FairMutex 경합: prepaint 프레임당 1 lock, 직렬화는 background+Arc 클론.
+
+---
+
+## 11. 구현 시 확인된 API 편차 (2026-08-22, 터미널 엔진 구현)
+
+설계 작성 시점의 가정과 실제 `gpui 0.2.2` / `alacritty_terminal 0.26.0` 로컬
+소스가 달랐던 지점. **레지스트리 소스를 직접 읽어 확정한 값**이다.
+
+### alacritty_terminal 0.26.0
+
+| 설계/가정 | 실제 |
+|---|---|
+| `Selection::simple()/semantic()/lines()` | 없음. `Selection::new(SelectionType, Point, Side)` 하나뿐 (doc 주석이 낡음). |
+| `Term::bell()` / `Term::reset_state()` 가 고유 메서드 | 아니다. `vte::ansi::Handler` 트레이트 메서드 — 호출하려면 `use ...vte::ansi::Handler`. |
+| `Term::vi_mode()` 게터 | 없음. `term.mode().contains(TermMode::VI)`. |
+| `Config.kitty_keyboard_protocol` | 필드명은 `kitty_keyboard`. |
+| `Processor::advance_until_terminated` | `Processor`에는 없다(`vte::Parser`에만). 로컬 주입은 `Processor::advance(&mut term, bytes)`. |
+| `Processor::new()` 로 바로 사용 | 타입 파라미터 `T: Timeout`이 **기본값이 있어도 추론되지 않는다**. `backend::AnsiProcessor = Processor<StdSyncHandler>` 별칭을 두었다. |
+| `Rgb`가 튜플 구조체 | 이름 있는 필드 `Rgb { r, g, b }`. |
+| `term::test::TermSize` 재사용 | 테스트 전용이라 못 쓴다 → `backend::TermSize`를 직접 정의(최소 2열/1행 클램프 포함). |
+| `Event`에 `ChildExit` 없음 | 있다 — `ChildExit(ExitStatus)`. `Exit`와 함께 `CloseTerminal`로 접었다. |
+
+`alacritty_terminal::vte`는 `lib.rs:20`에서 **정말로 재수출**되므로
+`inject_local`은 설계대로 PTY 우회 주입이 가능하다 (`Term<T>: vte::ansi::Handler`).
+
+### gpui 0.2.2
+
+| 설계/가정 | 실제 |
+|---|---|
+| `Element::request_layout(id: Option<&GlobalElementId>, ...)` 만 | `inspector_id: Option<&InspectorElementId>` 파라미터가 **추가로** 있다(3개 메서드 전부). |
+| `Pixels(pub f32)` | 필드가 `pub(crate)`. `f32::from(px)` 로 꺼낸다 (`sshub-terminal::fpx`). |
+| `ClickEvent`가 구조체 | 0.2.2에서는 **enum** (`Mouse`/`Keyboard`). 클릭 횟수는 `MouseDownEvent.click_count`에서 직접 읽었다. |
+| `cx.reveal_path` 없을 수 있음 → `open -R` 서브프로세스 | **`App::reveal_path(&Path)` 가 존재한다.** 서브프로세스 폴백은 불필요 — 쓰지 않았다. |
+| `RenderableCursor: Debug` | 구현 안 함 → `TerminalContent`에서 `Debug` derive 제거. |
+| `shape_line` 임의 텍스트 | `\n` 포함 시 `debug_assert!` — 행 단위로만 shape한다. |
+| `TextRun.len` = 문자 수 | **바이트 길이**. IME 범위는 UTF-16 → 경계에서 명시 변환(`offset_from_utf16`/`offset_to_utf16`). |
+
+페이즈 제약(런타임 assert)도 확인됨: `insert_hitbox`/`request_layout`은 prepaint,
+`paint_quad`/`handle_input`/`on_mouse_event`/`set_cursor_style`는 paint 전용.
+
+### 설계에서 의도적으로 조정한 것
+
+- **배치 분할 규칙 강화**: 설계는 "(fg, flags, underline) 동일 셀 묶기"였으나,
+  와이드/내로우가 한 배치에 섞이면 배치 **안쪽**에서 advance 드리프트가 남는다.
+  `wide` 플래그를 배치 키에 넣어 CJK 런과 ASCII 런이 절대 같은 배치에 들어가지
+  않게 했고, 공백 셀에서도 배치를 끊는다. 골든 테스트
+  `cjk_batches_start_at_their_grid_column`이 `가나다 abc 漢字` → 배치 원점
+  `(0, 7, 11)`을 고정한다.
+- **커서 색 대비**: 설계의 "min-contrast 헬퍼"는 아직 없다. 블록 커서는
+  액센트색 채움 + 글자를 **터미널 배경색**으로 덮어 그려 대비를 확보한다.
+- **`Terminal::mouse_up`이 `cx`를 받는다**: 선택 확정 시
+  `Event::SelectionsChanged`를 emit해야 해서 시그니처에 `&mut Context<Self>`가
+  붙었다 (설계 §3 스케치와 다름).
+
+### 아직 구현되지 않은 것 (이 작업 범위 밖)
+
+- OSC 52 클립보드(`ClipboardStore`/`ClipboardLoad`)는 수신만 하고 무시한다.
+- 드래그가 화면 밖으로 나갈 때의 **엣지 자동 스크롤**(§4).
+- 검색 **UI**(검색바·enter/shift-enter 순환). 모델(`search::SearchQuery`,
+  `Terminal::set_matches`)과 매치 rect 렌더링은 준비되어 있다.
+- 스크롤백 **디바운스 저장**(1500ms)과 `hydrated` 게이트를 실제로 소비하는
+  세션 계층 (`Terminal::hydrated`/`serialize_scrollback_for_disk`는 노출됨).
+- 브로드캐스트, 분할/탭 UI, 다중 창 (§5·§6·§8).

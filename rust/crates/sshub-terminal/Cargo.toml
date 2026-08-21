@@ -12,3 +12,4 @@ futures.workspace = true
 anyhow.workspace = true
 libc.workspace = true
 serde.workspace = true
+regex.workspace = true

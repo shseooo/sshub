@@ -39,6 +39,7 @@ futures = "0.3"
 smol = "2"
 uuid = { version = "1", features = ["v4"] }
 tempfile = "3"
+regex = "1"
 
 [profile.dev]
 # gpui는 dev에서도 최소 최적화가 없으면 느림 (Zed 관례)
