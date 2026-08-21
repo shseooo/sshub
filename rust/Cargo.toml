@@ -17,7 +17,9 @@ sshub-core = { path = "crates/sshub-core" }
 sshub-splits = { path = "crates/sshub-splits" }
 sshub-terminal = { path = "crates/sshub-terminal" }
 
-gpui = "0.2.2"
+# runtime_shaders: Metal Toolchain(Xcode 26 별도 컴포넌트) 미설치 환경에서도 빌드 가능.
+# `xcodebuild -downloadComponent MetalToolchain` 후에는 feature를 제거해 프리컴파일로 복귀 가능.
+gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 # upstream 사용; 문제 시 아래 한 줄로 Zed 포크 스왑 (DESIGN-terminal.md §1)
 # alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 alacritty_terminal = "0.26"

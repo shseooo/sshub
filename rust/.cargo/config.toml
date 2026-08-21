@@ -1,0 +1,4 @@
+# gpui build.rs가 Metal 셰이더를 컴파일하려면 full Xcode 툴체인이 필요하다.
+# xcode-select는 CommandLineTools를 가리키므로(전역 변경 없이) 여기서만 오버라이드.
+[env]
+DEVELOPER_DIR = "/Applications/Xcode.app/Contents/Developer"
