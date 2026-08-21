@@ -70,6 +70,18 @@ pub struct SavedLayout {
     pub active_index: usize,
 }
 
+/// 워크스페이스 → 창 셸 상향 이벤트.
+///
+/// 레이아웃을 **누가 저장하는지**가 다중 창의 핵심이다. 창이 여럿이면 각
+/// 워크스페이스가 `Settings.terminal_layout`에 직접 쓸 수 없다 — 마지막에 쓴
+/// 창이 나머지를 덮어쓰기 때문. 그래서 워크스페이스는 "바뀌었다"만 알리고,
+/// 실제 저장은 창 셸을 거쳐 앱 스코프 `WindowManager`가 전담한다
+/// (DESIGN-terminal.md §12 "어느 쪽이 최종 writer인지 정리").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkspaceEvent {
+    LayoutChanged,
+}
+
 pub struct TerminalWorkspace {
     registry: Entity<SessionRegistry>,
     state: Entity<AppState>,
@@ -89,9 +101,22 @@ pub struct TerminalWorkspace {
 }
 
 impl EventEmitter<DismissEvent> for TerminalWorkspace {}
+impl EventEmitter<WorkspaceEvent> for TerminalWorkspace {}
 
 impl TerminalWorkspace {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::new_seeded(None, window, cx)
+    }
+
+    /// 창별 시드로 시작한다 (다중 창). `seed`는 `save_layout`과 같은
+    /// `{tabs, activeIndex}` 값이며, 없으면 구버전 단일 레이아웃(설정)으로
+    /// 떨어진다. 시드를 `load_layout`에 태우는 이유는 id 복원 규칙(세션 id는
+    /// 보존, 탭/split id는 재발급)을 한 곳에만 두기 위해서다.
+    pub fn new_seeded(
+        seed: Option<serde_json::Value>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let state = app_state(cx);
         let (paths, settings_lang, layout, font_size) = {
             let state = state.read(cx);
@@ -151,6 +176,8 @@ impl TerminalWorkspace {
             _subscriptions: vec![state_sub],
         };
 
+        // 창 시드가 있으면 그것이 진실 — 설정의 단일 레이아웃은 무시한다.
+        let layout = seed.or(layout);
         if let Some((tabs, active)) = layout.as_ref().and_then(load_layout) {
             workspace.tabs = tabs;
             workspace.active_tab = active;
@@ -825,9 +852,15 @@ impl TerminalWorkspace {
     fn start_leaf(&mut self, leaf: &TerminalLeaf, _window: &mut Window, cx: &mut Context<Self>) {
         let session = leaf.session_id.clone();
         let cwd_from = leaf.cwd_from_session.clone();
-        let started = self.registry.update(cx, |reg, cx| {
-            reg.start(&session, leaf.server_id, cwd_from.as_ref(), cx)
-        });
+        // 이미 살아 있는 세션이면 **다시 start하지 않는다**. `start`는 같은 id의
+        // 옛 PTY를 kill하므로(레지스트리 §start), 다른 창에서 넘어온 탭이 여기서
+        // 죽어버린다. 살아 있는 엔티티에 뷰만 새로 붙이면 grid·스크롤백이 그대로다.
+        let started = match self.registry.read(cx).get(&session) {
+            Some(terminal) => Ok(terminal),
+            None => self.registry.update(cx, |reg, cx| {
+                reg.start(&session, leaf.server_id, cwd_from.as_ref(), cx)
+            }),
+        };
         let Ok(terminal) = started else {
             return; // 실패한 pane은 뷰 없이 안내 문구를 보여준다
         };
@@ -850,12 +883,55 @@ impl TerminalWorkspace {
         self.views.insert(session, view);
     }
 
-    /// 현재 탭 구성을 설정에 저장한다 (TS `{tabs, activeIndex}` 포맷).
+    /// 탭 구성이 바뀌었음을 창 셸에 알린다.
+    ///
+    /// **설정을 직접 쓰지 않는다.** 창이 여러 개면 각자 `terminal_layout`에
+    /// 쓰는 순간 서로를 덮어쓰므로, 저장은 셸 → `WindowManager`(앱 스코프)가
+    /// 창 레코드 단위로 모아서 한다. 현재 탭은 `tabs()`/`active_tab_id()`로
+    /// 읽어 간다.
     pub fn persist_layout(&self, cx: &mut Context<Self>) {
-        let value = save_layout(&self.tabs, self.active_tab.as_ref());
-        self.state.update(cx, |state, cx| {
-            state.update_settings(|s| s.terminal_layout = Some(value), cx);
-        });
+        cx.emit(WorkspaceEvent::LayoutChanged);
+    }
+
+    /// 이 워크스페이스의 저장 페이로드 (`{tabs, activeIndex}`).
+    pub fn layout_value(&self) -> serde_json::Value {
+        save_layout(&self.tabs, self.active_tab.as_ref())
+    }
+
+    /// 활성 탭을 이 창에서 **떼어낸다** — 세션은 죽이지 않는다.
+    ///
+    /// 다른 창으로 옮기기 위한 경로라 `close_tab`과 결정적으로 다르다:
+    /// `SessionRegistry::close`는 PTY를 kill하고 스크롤백까지 지우므로 절대
+    /// 부르면 안 되고, 뷰만 버린다. `Entity<Terminal>`은 앱 스코프 레지스트리가
+    /// 계속 들고 있으므로 새 창이 같은 session id로 다시 붙으면 PTY·grid가
+    /// 그대로 살아 있다 (DESIGN-terminal.md §8).
+    pub fn detach_active_tab(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<TerminalTab> {
+        let index = self.active_index()?;
+        let tab = self.tabs.remove(index);
+        self.broadcast_tabs.remove(&tab.id);
+        for leaf in leaves(&tab.root) {
+            self.views.remove(&leaf.session_id);
+            self.search.remove(&leaf.session_id);
+        }
+        if self.active_tab.as_ref() == Some(&tab.id) {
+            self.active_tab = self.tabs.last().map(|t| t.id.clone());
+            self.focused_pane = self
+                .active_index()
+                .and_then(|i| leaves(&self.tabs[i].root).first().map(|l| l.session_id.clone()));
+        }
+        // 창을 빈 채로 두지 않는다 — 탭 0개인 창은 조작할 수단이 없다.
+        if self.tabs.is_empty() {
+            self.push_local_tab(None);
+        }
+        self.sync_sessions(window, cx);
+        self.focus_active_pane(window, cx);
+        self.persist_layout(cx);
+        cx.notify();
+        Some(tab)
     }
 
     /// 앱 종료 경로 (§6): 라이브 cwd 스냅샷 → 스크롤백 flush → PTY kill.
@@ -1299,6 +1375,35 @@ mod tests {
         assert_eq!(leaves(&loaded[0].root)[1].server_id, Some(7));
         assert_ne!(loaded[0].id, TabId::new("t1"), "탭 id는 transient");
         assert_eq!(active.as_ref(), Some(&loaded[1].id), "activeIndex가 유지된다");
+    }
+
+    #[test]
+    fn a_tab_moved_to_another_window_keeps_its_session_ids() {
+        // 창 간 탭 이동의 핵심 불변식. 이동 시드는 `save_layout`과 같은 모양이고
+        // `load_layout`이 **세션 id를 보존**하므로, 새 창의 `sync_sessions`가
+        // 같은 id로 레지스트리를 조회해 살아 있는 PTY를 그대로 재사용한다.
+        // (세션 id가 재발급되면 새 셸이 뜨면서 grid/스크롤백이 날아간다.)
+        let moved = TerminalTab {
+            id: TabId::new("t1"),
+            root: split(vec![leaf("a", None), leaf("b", Some(7))]),
+            name: Some("작업".into()),
+        };
+        let seed = serde_json::json!({ "tabs": [moved], "activeIndex": 0 });
+
+        let (loaded, active) = load_layout(&seed).expect("시드는 유효한 레이아웃");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(
+            leaves(&loaded[0].root)
+                .iter()
+                .map(|l| l.session_id.as_str().to_string())
+                .collect::<Vec<_>>(),
+            vec!["a", "b"],
+            "세션 id가 보존돼야 PTY를 재사용한다"
+        );
+        assert_eq!(leaves(&loaded[0].root)[1].server_id, Some(7), "서버 세션도 그대로");
+        assert_eq!(loaded[0].name.as_deref(), Some("작업"), "탭 이름을 들고 간다");
+        assert_ne!(loaded[0].id, TabId::new("t1"), "탭 id만 새 창에서 재발급");
+        assert_eq!(active.as_ref(), Some(&loaded[0].id));
     }
 
     #[test]

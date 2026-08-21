@@ -15,4 +15,6 @@ pub mod terminal_workspace;
 pub mod theme;
 pub mod ui;
 pub mod views;
+pub mod window_manager;
 pub mod window_session;
+pub mod workspace;
