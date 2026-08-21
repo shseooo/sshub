@@ -5,9 +5,14 @@
 pub mod i18n;
 pub mod keymap;
 pub mod session;
+pub mod session_registry;
+pub mod split_view;
 pub mod state;
+pub mod tab_bar;
 pub mod terminal_element;
 pub mod terminal_view;
+pub mod terminal_workspace;
 pub mod theme;
 pub mod ui;
+pub mod views;
 pub mod window_session;
