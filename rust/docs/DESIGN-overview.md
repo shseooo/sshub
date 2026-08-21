@@ -52,12 +52,22 @@ cargo run -p sshub                            # 앱 실행
 
 ## 마일스톤
 
-0. 스캐폴드 + 헤드리스 터미널 스파이크 (alacritty 0.26 API 검증)
-1. sshub-core + sshub-splits 완성 (테스트 포함, compat 픽스처 게이트)
-2. 화면에 에코되는 터미널 1개 (TerminalElement 최소)
-3. 렌더링 완성 (색/커서/와이드문자/리사이즈/스크롤) + 키·IME(한글)
-4. 선택/복사/마우스/하이퍼링크 + 분할/탭 UI
-5. 세션(ssh/cwd 상속/배너/재연결) + 스크롤백 영속화
-6. 위젯 킷 + 페이지 5종 + 설정/단축키/i18n/테마
-7. 다중 창 + 창 상태 영속화 + 종료 순서
-8. 패키징 (.app 번들, ad-hoc 서명)
+0. ✅ 스캐폴드 + 헤드리스 터미널 스파이크 (alacritty 0.26 API 검증)
+1. ✅ sshub-core + sshub-splits (compat 픽스처 게이트 통과 — Node 산출물 바이트 일치)
+2. ✅ 화면에 에코되는 터미널 (TerminalElement + terminal_demo 예제)
+3. ✅ 렌더링(색/커서/와이드문자/리사이즈/스크롤) + 키·IME(한글 조합 오버레이)
+4. ✅ 선택/복사/마우스/하이퍼링크 + 분할/탭 UI (split_view·tab_bar)
+5. ✅ 세션(ssh/cwd 상속/배너/재연결) + 스크롤백 영속화(hydrated 가드)
+6. ✅ 위젯 킷 + 페이지 5종 + 설정/단축키/i18n/테마
+7. 🔄 다중 창 + 앱 셸 통합(workspace/main) + 종료 순서
+8. ✅ 패키징 스크립트 (rust/install.sh — .app 번들 + ad-hoc 서명)
+
+미구현(후속): pane 검색 UI(모델은 있음), 새 탭/분할 시 서버 선택 팝오버,
+컨텍스트 메뉴(재연결·다른 탭 닫기), OSC 52 클립보드, 드래그 엣지 자동 스크롤.
+
+## 테스트 현황 (2026-08-22)
+
+전체 `cargo test --workspace` 430+ 통과, 경고 0.
+- sshub-core 152 + Node 호환 10 + ssh-keygen 통합 10
+- sshub-splits 62 / sshub-terminal 88 + e2e 5 + 스파이크 1
+- sshub(앱) 102 — 위젯·뷰·키맵·세션·분할·창 상태
