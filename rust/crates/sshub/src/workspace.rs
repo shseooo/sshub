@@ -72,6 +72,9 @@ pub struct Workspace {
     toasts: Vec<Toast>,
     next_toast_id: u64,
     focus_handle: FocusHandle,
+    /// 이 창에 **실제로 적용된** 배경 모드. 설정이 바뀌면 렌더에서 이 값과
+    /// 비교해 달라졌을 때만 플랫폼 창을 다시 건드린다(매 프레임 호출 방지).
+    window_background: WindowBackgroundAppearance,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -106,6 +109,16 @@ pub fn cascaded(from: Option<&SavedBounds>) -> SavedBounds {
     }
 }
 
+/// 반투명이 0이면 불투명 창, 1 이상이면 뒤가 비치는(블러) 창.
+/// 창 생성과 런타임 변경이 **같은 규칙**을 쓰도록 한 곳에 둔다.
+pub fn background_appearance(translucency: u8) -> WindowBackgroundAppearance {
+    if translucency > 0 {
+        WindowBackgroundAppearance::Blurred
+    } else {
+        WindowBackgroundAppearance::Opaque
+    }
+}
+
 fn window_options(bounds: &SavedBounds, cx: &App) -> WindowOptions {
     let dims = size(px(bounds.width as f32), px(bounds.height as f32));
     // x/y는 둘 다 있을 때만 신뢰한다(sanitize_bounds가 보장) — 없으면 화면 중앙.
@@ -121,12 +134,9 @@ fn window_options(bounds: &SavedBounds, cx: &App) -> WindowOptions {
             appears_transparent: true,
             traffic_light_position: Some(point(px(12.), px(12.))),
         }),
-        // 반투명은 루트 bg 알파에 이미 구워져 있다 — 여기선 뒤를 비출지만 정한다.
-        window_background: if translucency > 0 {
-            WindowBackgroundAppearance::Blurred
-        } else {
-            WindowBackgroundAppearance::Opaque
-        },
+        // 색 알파는 테마가 굽는다(루트 bg·터미널 표면). 여기서 정하는 건 창
+        // 뒤를 실제로 비출지 여부뿐이고, 설정을 바꾸면 `Render`가 다시 맞춘다.
+        window_background: background_appearance(translucency),
         window_min_size: Some(size(px(760.), px(480.))),
         ..Default::default()
     }
@@ -196,6 +206,10 @@ impl Workspace {
             toasts: Vec::new(),
             next_toast_id: 0,
             focus_handle: cx.focus_handle(),
+            // `window_options`가 창을 만들 때 쓴 값과 같은 자리에서 출발한다.
+            window_background: background_appearance(
+                state.read(cx).settings.appearance.translucency,
+            ),
             _subscriptions: subscriptions,
         };
         // 시드로 받은 탭을 매니저 레코드에 즉시 반영해 둔다 — 첫 저장이
@@ -490,13 +504,26 @@ impl Render for Workspace {
 
         let t = theme(cx).clone();
 
+        // 반투명은 창 생성 시 `WindowOptions::window_background`로만 정해져 있어
+        // 설정을 바꿔도 재시작 전까지 반영되지 않았다(사용자 신고의 절반).
+        // gpui 0.2.2 `Window::set_background_appearance`(gpui/src/window.rs:1789)
+        // 는 런타임 변경을 지원한다 — macOS 구현이 그 자리에서 `setOpaque_`와
+        // `NSVisualEffectView`를 다시 붙였다 뗀다. 값이 달라진 프레임에만 부른다.
+        let want_background = background_appearance(t.translucency);
+        if self.window_background != want_background {
+            self.window_background = want_background;
+            window.set_background_appearance(want_background);
+        }
+
         let content = match (&self.active, self.page) {
             (_, Page::Terminal) => self.terminal.clone().into_any_element(),
             (Some(ActiveView::Servers(view)), _) => view.clone().into_any_element(),
             (Some(ActiveView::ServerEdit(view)), _) => view.clone().into_any_element(),
             (Some(ActiveView::Keys(view)), _) => view.clone().into_any_element(),
             (Some(ActiveView::Settings(view)), _) => view.clone().into_any_element(),
-            (None, _) => div().into_any_element(),
+            // 내비게이션 사이의 빈 프레임. 루트가 더는 배경을 칠하지 않으므로
+            // 여기서 한 겹 깔아 준다(안 그러면 그 프레임만 창이 뻥 뚫린다).
+            (None, _) => div().size_full().bg(t.bg).into_any_element(),
         };
 
         // 36px 드래그 스트립. `appears_transparent`라 네이티브 타이틀바가 없어
@@ -506,6 +533,7 @@ impl Render for Workspace {
         let titlebar = div()
             .h(px(TITLEBAR_HEIGHT))
             .flex_shrink_0()
+            .bg(t.bg)
             .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, window, _cx| {
                 window.start_window_move();
             });
@@ -517,7 +545,11 @@ impl Render for Workspace {
             .size_full()
             .flex()
             .flex_col()
-            .bg(t.bg)
+            // 루트는 배경을 칠하지 않는다. 각 화면(서버/키/설정 목록)과
+            // `TerminalWorkspace`가 이미 `size_full`로 자기 배경을 칠하고 있어서
+            // 여기서 또 칠하면 반투명 알파가 두 번 합성돼(0.6² → 0.84) 슬라이더를
+            // 끝까지 올려도 거의 비치지 않는다. 대신 어디에도 안 덮이는
+            // 타이틀바 스트립에만 배경을 직접 준다(사이드바는 불투명 surface).
             .text_color(t.text)
             .on_action(cx.listener(Self::on_new_window))
             .on_action(cx.listener(Self::on_move_tab_to_new_window))
@@ -545,5 +577,24 @@ impl Render for Workspace {
                     .as_ref()
                     .map(|modal| ModalOverlay::new(modal.view.clone())),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 창 생성(`window_options`)과 런타임 적용(`Render`)이 같은 규칙을 봐야
+    /// "재시작해야 켜지는 반투명" 같은 어긋남이 다시 생기지 않는다.
+    #[test]
+    fn opaque_only_when_translucency_is_zero() {
+        assert_eq!(background_appearance(0), WindowBackgroundAppearance::Opaque);
+        for translucency in [1u8, 5, 20, 40, 255] {
+            assert_eq!(
+                background_appearance(translucency),
+                WindowBackgroundAppearance::Blurred,
+                "translucency {translucency}",
+            );
+        }
     }
 }

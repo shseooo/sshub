@@ -2,6 +2,8 @@
 //! 시맨틱은 목으로는 검증되지 않는다.
 //!
 //! ssh-keygen이 없는 환경에서는 조용히 통과한다(CI 이식성).
+//!
+//! 키 이름은 곧 `~/.ssh` 안의 파일명이다 — 그래서 이름을 `id_rsa` 꼴로 쓴다.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -29,6 +31,7 @@ fn setup() -> Env {
         dir.path().join("sshub.json"),
         dir.path().join(".ssh").join("config"),
         dir.path().join("ssh_keys"),
+        dir.path().join("ssh_keys"),
     );
     Env { _dir: dir, store, keys_dir }
 }
@@ -44,7 +47,7 @@ fn generates_ed25519_key_with_0600_files() {
     }
     let mut env = setup();
     let dto = CreateKeyDto {
-        name: "test ed25519".into(),
+        name: "id_test_ed25519".into(),
         key_type: "ed25519".into(),
         key_size: None,
         passphrase: None,
@@ -75,7 +78,7 @@ fn refuses_to_overwrite_an_existing_key_file() {
     }
     let mut env = setup();
     let dto = CreateKeyDto {
-        name: "dup".into(),
+        name: "id_dup".into(),
         key_type: "ed25519".into(),
         key_size: None,
         passphrase: None,
@@ -89,7 +92,7 @@ fn refuses_to_overwrite_an_existing_key_file() {
 fn rejects_dsa_generation() {
     let mut env = setup();
     let dto = CreateKeyDto {
-        name: "nope".into(),
+        name: "id_nope".into(),
         key_type: "dsa".into(),
         key_size: None,
         passphrase: None,
@@ -108,7 +111,7 @@ fn rename_moves_private_and_public_files() {
         &mut env.store,
         &env.keys_dir,
         &CreateKeyDto {
-            name: "before".into(),
+            name: "id_before".into(),
             key_type: "ed25519".into(),
             key_size: None,
             passphrase: None,
@@ -121,7 +124,7 @@ fn rename_moves_private_and_public_files() {
         &env.keys_dir,
         &UpdateKeyDto {
             id: key.id,
-            name: "after".into(),
+            name: "id_after".into(),
             public_key: key.public_key.clone(),
             key_type: KeyType::Ed25519,
             pem_data: None,
@@ -130,7 +133,7 @@ fn rename_moves_private_and_public_files() {
     )
     .unwrap();
 
-    assert_eq!(updated.name, "after");
+    assert_eq!(updated.name, "id_after");
     assert!(!env.keys_dir.join("id_before").exists());
     assert!(!env.keys_dir.join("id_before.pub").exists());
     assert!(env.keys_dir.join("id_after").exists(), "개인 키가 함께 이동해야 접속이 유지된다");
@@ -148,7 +151,7 @@ fn rename_onto_an_existing_file_is_refused() {
         &mut env.store,
         &env.keys_dir,
         &CreateKeyDto {
-            name: "alpha".into(),
+            name: "id_alpha".into(),
             key_type: "ed25519".into(),
             key_size: None,
             passphrase: None,
@@ -159,7 +162,7 @@ fn rename_onto_an_existing_file_is_refused() {
         &mut env.store,
         &env.keys_dir,
         &CreateKeyDto {
-            name: "beta".into(),
+            name: "id_beta".into(),
             key_type: "ed25519".into(),
             key_size: None,
             passphrase: None,
@@ -172,7 +175,7 @@ fn rename_onto_an_existing_file_is_refused() {
         &env.keys_dir,
         &UpdateKeyDto {
             id: a.id,
-            name: "beta".into(),
+            name: "id_beta".into(),
             public_key: a.public_key.clone(),
             key_type: KeyType::Ed25519,
             pem_data: None,
@@ -193,7 +196,7 @@ fn passphrase_lifecycle_round_trip() {
         &mut env.store,
         &env.keys_dir,
         &CreateKeyDto {
-            name: "phrase".into(),
+            name: "id_phrase".into(),
             key_type: "ed25519".into(),
             key_size: None,
             passphrase: Some("first-pass".into()),
@@ -231,7 +234,7 @@ fn imports_a_pem_and_derives_its_public_key() {
         &mut src.store,
         &src.keys_dir,
         &CreateKeyDto {
-            name: "source".into(),
+            name: "id_source".into(),
             key_type: "ed25519".into(),
             key_size: None,
             passphrase: None,
@@ -246,7 +249,7 @@ fn imports_a_pem_and_derives_its_public_key() {
         &mut env.store,
         &env.keys_dir,
         &ImportKeyDto {
-            name: "imported".into(),
+            name: "id_imported".into(),
             public_key: String::new(),
             pem_data: Some(pem.clone()),
             key_type: KeyType::Rsa, // 실제 타입 감지가 이 라벨을 덮어써야 한다
@@ -280,7 +283,7 @@ fn loads_key_files_from_disk() {
         &mut env.store,
         &env.keys_dir,
         &CreateKeyDto {
-            name: "loadme".into(),
+            name: "id_loadme".into(),
             key_type: "ed25519".into(),
             key_size: None,
             passphrase: None,
@@ -311,7 +314,7 @@ fn delete_removes_both_key_files_and_the_record() {
         &mut env.store,
         &env.keys_dir,
         &CreateKeyDto {
-            name: "goner".into(),
+            name: "id_goner".into(),
             key_type: "ed25519".into(),
             key_size: None,
             passphrase: None,
@@ -335,7 +338,7 @@ fn rsa_generation_honors_key_size() {
         &mut env.store,
         &env.keys_dir,
         &CreateKeyDto {
-            name: "rsa2048".into(),
+            name: "id_rsa2048".into(),
             key_type: "rsa".into(),
             key_size: Some(2048),
             passphrase: None,

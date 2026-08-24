@@ -1613,7 +1613,10 @@ impl Render for TerminalWorkspace {
             .size_full()
             .flex()
             .flex_col()
-            .bg(theme.bg)
+            // 터미널 페이지의 유일한 배경 층. 반투명 알파가 구워진 **터미널**
+            // 표면색을 쓴다 — 탭바(불투명 surface)·분할 거터·빈 상태까지 한
+            // 겹으로 덮어야 알파가 두 번 합성되지 않는다.
+            .bg(theme.terminal.background)
             .on_action(cx.listener(Self::on_new_tab))
             .on_action(cx.listener(Self::on_close_pane))
             .on_action(cx.listener(Self::on_split_right))

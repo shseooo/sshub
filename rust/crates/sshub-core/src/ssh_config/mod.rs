@@ -10,7 +10,7 @@ mod parse;
 
 pub use backups::backups_to_prune;
 pub use document::{Document, Entry, HostBlock, HostSpec, MatchBlock, Node};
-pub use file::{write_document, ConfigWrite};
+pub use file::{resolve_identity_path, write_document, ConfigWrite};
 pub use parse::parse_ssh_config;
 
 // Phase 2: store가 config를 원본으로 삼으면서 필요해진 내부 헬퍼들.

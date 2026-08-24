@@ -9,6 +9,8 @@ pub mod crypto;
 pub mod error;
 pub mod fsutil;
 pub mod key_files;
+pub mod key_migration;
+pub mod key_scan;
 pub mod key_type;
 pub mod keys_io;
 pub mod model;

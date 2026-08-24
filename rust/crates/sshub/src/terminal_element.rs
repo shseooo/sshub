@@ -67,7 +67,11 @@ pub fn convert_color(color: &AlacColor, theme: &TerminalTheme) -> Hsla {
             NamedColor::Foreground | NamedColor::BrightForeground => {
                 rgba_to_hsla(theme.foreground)
             }
-            NamedColor::Background => rgba_to_hsla(theme.background),
+            // 반투명 알파가 섞인 `background`가 아니라 불투명 사본을 쓴다.
+            // 여기로 오는 건 INVERSE 등으로 기본 배경을 **실제로 칠해야** 하는
+            // 경우뿐이고(기본 배경 셀은 `build_bg_runs`가 아예 거른다),
+            // 알파가 섞이면 그 칸만 창 배경이 비쳐 구멍처럼 보인다.
+            NamedColor::Background => rgba_to_hsla(theme.background_opaque),
             NamedColor::Cursor => rgba_to_hsla(theme.cursor),
             NamedColor::DimForeground => {
                 let mut c = rgba_to_hsla(theme.foreground);
@@ -642,7 +646,7 @@ impl Element for TerminalElement {
             };
             let inverse = batch.flags.contains(Flags::INVERSE);
             let mut color = if inverse {
-                rgba_to_hsla(self.theme.background)
+                rgba_to_hsla(self.theme.background_opaque)
             } else {
                 convert_color(&batch.fg, &self.theme)
             };
@@ -728,7 +732,8 @@ impl Element for TerminalElement {
             Some(ImeOverlay {
                 background: fill(
                     Bounds::new(origin, size(width, tb.line_height)),
-                    rgba_to_hsla(self.theme.background),
+                    // 조합 중인 글자가 밑의 셀과 겹쳐 보이면 안 된다 — 불투명 고정.
+                    rgba_to_hsla(self.theme.background_opaque),
                 ),
                 // 조합 중임을 알리는 두꺼운 밑줄
                 underline: fill(
@@ -845,7 +850,7 @@ fn build_cursor(
     // 블록 커서는 채운 뒤 글자를 배경색으로 덮어 그린다 (가독성).
     let text = if kind == CursorKind::Block && content.cursor_char != ' ' {
         let s = content.cursor_char.to_string();
-        let run = element.text_run(&s, rgba_to_hsla(element.theme.background), Flags::empty());
+        let run = element.text_run(&s, rgba_to_hsla(element.theme.background_opaque), Flags::empty());
         Some(window.text_system().shape_line(s.into(), font_size, &[run], None))
     } else {
         None

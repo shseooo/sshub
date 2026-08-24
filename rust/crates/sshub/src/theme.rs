@@ -1,6 +1,15 @@
 //! Zed풍 미니멀 다크 테마 토큰 (DESIGN-ui.md §4). dark 전용.
 //! 어센트/터미널 fg·bg/반투명은 설정에서 오버라이드된다.
-use gpui::{rgb, rgba, Hsla, Rgba};
+use gpui::{rgb, Hsla, Rgba};
+
+/// 반투명 슬라이더 상한(%). 이 위로는 글자가 배경에 묻혀 읽히지 않는다.
+pub const TRANSLUCENCY_MAX: u8 = 40;
+
+/// 반투명 설정(0..=`TRANSLUCENCY_MAX` %) → 알파. 0%면 1.0(불투명), 40%면 0.6.
+/// 상한을 넘는 값은 잘라 낸다 — 손으로 고친 `sshub.json`도 여기서 방어된다.
+pub fn translucency_alpha(translucency: u8) -> f32 {
+    1.0 - f32::from(translucency.min(TRANSLUCENCY_MAX)) / 100.0
+}
 
 #[derive(Clone, Debug)]
 pub struct Theme {
@@ -20,7 +29,8 @@ pub struct Theme {
     pub success: Hsla,
     pub warning: Hsla,
     pub terminal: TerminalTheme,
-    /// 0..=40 (%) — bg에 알파로 구움 (macOS Blurred 배경이 비침)
+    /// 0..=`TRANSLUCENCY_MAX` (%) — 루트 bg와 터미널 표면에 알파로 구움
+    /// (macOS `WindowBackgroundAppearance::Blurred` 배경이 비침).
     pub translucency: u8,
 }
 
@@ -29,7 +39,13 @@ pub struct TerminalTheme {
     /// 터미널 고정폭 폰트 패밀리 (기본은 내장 D2Coding — `crate::fonts`).
     pub font_family: String,
     pub foreground: Rgba,
+    /// 터미널 표면 색 — 반투명 알파가 구워져 있다. 창 배경이 비치는 곳은
+    /// 사실상 여기뿐이라(터미널이 창의 대부분을 덮는다) 효과가 읽히는 층이다.
     pub background: Rgba,
+    /// 같은 색의 알파 1.0 사본. 아래를 **가려야** 하는 곳 — IME 조합 오버레이,
+    /// INVERSE 셀의 글자색 — 에서 쓴다. 여기에 알파가 섞이면 밑 글자가 비쳐
+    /// 조합 중인 글자가 겹쳐 보인다.
+    pub background_opaque: Rgba,
     pub cursor: Rgba,
     /// ANSI 0-7, 8-15 (One Dark)
     pub palette: [Rgba; 16],
@@ -60,13 +76,19 @@ impl Theme {
         term_font_size: f32,
         term_font_family: String,
     ) -> Self {
-        let translucency = translucency.min(40);
+        let translucency = translucency.min(TRANSLUCENCY_MAX);
+        let alpha = translucency_alpha(translucency);
         let accent_hsla = h(accent);
         let mut accent_wash = accent_hsla;
         accent_wash.a = 0.14;
-        // 반투명은 루트 bg에만 알파를 구움 (카드/터미널은 불투명 유지)
-        let bg_alpha = 1.0 - f32::from(translucency) / 100.0;
-        let bg = Hsla::from(rgba((0x16181d << 8) | ((bg_alpha * 255.0) as u32)));
+        // 반투명 층은 한 픽셀에 **한 겹만** 올린다. 반투명 위에 반투명을 겹치면
+        // 알파가 1-(1-a)²로 합성돼(0.6 두 겹 → 0.84) 슬라이더를 끝까지 올려도
+        // 거의 비치지 않는다. 그래서 알파는 루트 bg와 터미널 표면에만 굽고,
+        // 사이드바(surface)·카드(elevated)·모달·탭바·테두리는 불투명으로 둔다
+        // (겹침 방지의 나머지 절반은 `workspace.rs` 렌더 트리가 맡는다).
+        let mut bg = h(0x16181d);
+        bg.a = alpha;
+        let background_opaque = rgb(term_bg.unwrap_or(0x16181d));
         Self {
             bg,
             surface: h(0x1c1e24),
@@ -86,7 +108,8 @@ impl Theme {
             terminal: TerminalTheme {
                 font_family: term_font_family,
                 foreground: rgb(term_fg.unwrap_or(0xc8ccd4)),
-                background: rgb(term_bg.unwrap_or(0x16181d)),
+                background: Rgba { a: alpha, ..background_opaque },
+                background_opaque,
                 cursor: rgb(accent),
                 palette: [
                     rgb(0x282c34),
@@ -131,4 +154,70 @@ pub fn init(cx: &mut gpui::App) {
 pub fn with_alpha(mut color: Hsla, alpha: f32) -> Hsla {
     color.a = alpha;
     color
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn theme_with(translucency: u8) -> Theme {
+        Theme::with_overrides(0x74ade8, translucency, None, None, 14.0, "mono".to_string())
+    }
+
+    #[test]
+    fn alpha_follows_the_percentage() {
+        assert_eq!(translucency_alpha(0), 1.0);
+        assert_eq!(translucency_alpha(20), 0.8);
+        assert!((translucency_alpha(40) - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn alpha_is_clamped_above_the_maximum() {
+        assert_eq!(translucency_alpha(41), translucency_alpha(TRANSLUCENCY_MAX));
+        assert_eq!(translucency_alpha(255), translucency_alpha(TRANSLUCENCY_MAX));
+    }
+
+    #[test]
+    fn zero_translucency_keeps_every_layer_opaque() {
+        let t = theme_with(0);
+        assert_eq!(t.bg.a, 1.0);
+        assert_eq!(t.terminal.background.a, 1.0);
+        assert_eq!(t.terminal.background_opaque.a, 1.0);
+    }
+
+    #[test]
+    fn translucency_reaches_the_root_bg_and_the_terminal_surface() {
+        let t = theme_with(40);
+        assert!((t.bg.a - 0.6).abs() < 1e-6);
+        assert!((t.terminal.background.a - 0.6).abs() < 1e-6);
+    }
+
+    /// 사이드바·카드·테두리까지 비치면 글자가 읽히지 않는다 — 불투명 고정.
+    #[test]
+    fn opaque_tokens_stay_opaque_at_every_setting() {
+        for translucency in [0u8, 20, 40, 255] {
+            let t = theme_with(translucency);
+            assert_eq!(t.surface.a, 1.0, "surface @ {translucency}");
+            assert_eq!(t.elevated.a, 1.0, "elevated @ {translucency}");
+            assert_eq!(t.border.a, 1.0, "border @ {translucency}");
+            assert_eq!(t.border_subtle.a, 1.0, "border_subtle @ {translucency}");
+            assert_eq!(t.text.a, 1.0, "text @ {translucency}");
+            // IME 오버레이가 밑 글자를 가리려면 이쪽은 반드시 1.0이어야 한다.
+            assert_eq!(t.terminal.background_opaque.a, 1.0, "term opaque @ {translucency}");
+        }
+    }
+
+    /// 반투명이어도 색상 자체는 그대로여야 한다(알파만 다른 같은 색).
+    #[test]
+    fn terminal_background_keeps_its_colour_when_translucent() {
+        let t = Theme::with_overrides(0x74ade8, 40, None, Some(0x102030), 14.0, "mono".to_string());
+        let (a, b) = (t.terminal.background, t.terminal.background_opaque);
+        assert_eq!((a.r, a.g, a.b), (b.r, b.g, b.b));
+        assert_eq!(b.a, 1.0);
+    }
+
+    #[test]
+    fn translucency_is_clamped_on_the_theme_too() {
+        assert_eq!(theme_with(255).translucency, TRANSLUCENCY_MAX);
+    }
 }

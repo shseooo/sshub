@@ -73,6 +73,7 @@ impl AppState {
             paths.store_file.clone(),
             paths.ssh_config_file.clone(),
             paths.keys_dir.clone(),
+            paths.app_keys_dir.clone(),
         );
         store.load();
         let settings = Settings::load(&paths.settings_file);

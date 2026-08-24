@@ -32,7 +32,7 @@ impl Ctx {
         self.dir.path().join("ssh_keys")
     }
     fn open(&self) -> Store {
-        let mut s = Store::new(self.store_path(), self.config_path(), self.keys_dir());
+        let mut s = Store::new(self.store_path(), self.config_path(), self.keys_dir(), self.keys_dir());
         s.load();
         s
     }
@@ -397,7 +397,8 @@ fn derives_auth_type_and_key_id_from_the_identity_file() {
     let mut store = ctx.open();
     let key = store
         .insert_key(&NewKey {
-            name: "work key".into(),
+            // 키 이름 = ~/.ssh 안의 파일명 (id_rsa 처럼).
+            name: "id_work_key".into(),
             public_key: "ssh-ed25519 AAAA".into(),
             key_type: KeyType::Ed25519,
             key_size: 256,

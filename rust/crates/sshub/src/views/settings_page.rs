@@ -32,7 +32,9 @@ use crate::views::{current_lang, ViewEvent};
 
 const FONT_SIZE_MIN: f32 = 10.0;
 const FONT_SIZE_MAX: f32 = 24.0;
-const TRANSLUCENCY_MAX: u8 = 40;
+/// 슬라이더 상한은 테마와 한 값을 공유한다 — 여기만 늘리면 테마가 다시 잘라
+/// 내서 "올려도 안 변하는" 구간이 생긴다.
+use crate::theme::TRANSLUCENCY_MAX;
 
 /// `#rrggbb` / `rrggbb` → 0xRRGGBB.
 pub fn parse_hex_color(value: &str) -> Option<u32> {
@@ -128,6 +130,10 @@ fn apply_theme(settings: &Settings, cx: &mut App) {
             true,
         ),
     ));
+    // 전역 테마를 바꿔도 다른 창은 자기 이벤트가 없으면 다시 그리지 않는다.
+    // 반투명은 `Workspace::render`에서 플랫폼 창에 적용되므로, 열려 있는 창을
+    // 전부 깨워야 설정이 그 자리에서 모든 창에 먹는다.
+    cx.refresh_windows();
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

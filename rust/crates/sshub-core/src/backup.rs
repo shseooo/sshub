@@ -103,6 +103,7 @@ mod tests {
             dir.path().join("sshub.json"),
             dir.path().join(".ssh").join("config"),
             dir.path().join("ssh_keys"),
+            dir.path().join("ssh_keys"),
         );
         store.load();
         let keys_dir = dir.path().join("ssh_keys");

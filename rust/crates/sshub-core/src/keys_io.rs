@@ -9,6 +9,8 @@ use std::process::Command;
 
 use crate::error::CoreError;
 use crate::fsutil::{rm_force, secure_write};
+use crate::key_scan;
+use crate::model::KeyType;
 use crate::key_files::{key_file_name, server_pem_file_name};
 use crate::key_type::{default_key_size, detect_key_type, normalize_creatable_key_type};
 use crate::model::{CreateKeyDto, ImportKeyDto, LoadedKeyFile, SshKey, SshKeyView, UpdateKeyDto};
@@ -59,15 +61,50 @@ fn pub_path(priv_path: &Path) -> PathBuf {
     crate::fsutil::path_with_suffix(priv_path, ".pub")
 }
 
+/// `~/.ssh`에 실제로 있는 키를 보여준다 — config를 원본으로 삼은 것과 같은
+/// 원칙이다. 파일 시스템이 진실이고 사이드카는 id·패스프레이즈 여부 같은
+/// 앱 메타데이터만 갖는다. 그래서 손으로 만든 `id_rsa`도 목록에 뜬다.
 pub fn get_ssh_keys(store: &Store, keys_dir: &Path) -> Vec<SshKeyView> {
-    store
-        .list_keys()
+    let records = store.list_keys();
+    let mut out: Vec<SshKeyView> = key_scan::discover_keys(keys_dir)
         .into_iter()
-        .map(|k| {
-            let has = key_path_for(keys_dir, &k.name).exists();
-            SshKeyView { key: k, has_private_file: has }
+        .map(|d| {
+            // 사이드카에 같은 파일명 기록이 있으면 id·타입·패스프레이즈를 잇는다.
+            let known = records.iter().find(|k| k.name == d.file_name);
+            let key = SshKey {
+                id: known.map(|k| k.id).unwrap_or(0),
+                name: d.file_name.clone(),
+                public_key: if d.public_key.is_empty() {
+                    known.map(|k| k.public_key.clone()).unwrap_or_default()
+                } else {
+                    d.public_key.clone()
+                },
+                pem_data: None,
+                key_type: detect_key_type(&d.public_key)
+                    .or_else(|| known.map(|k| k.key_type))
+                    .unwrap_or(KeyType::Ed25519),
+                key_size: known.map(|k| k.key_size).unwrap_or(0),
+                // 파일에서 못 알아보면 사이드카 값을 믿는다.
+                passphrase_protected: d
+                    .encrypted
+                    .unwrap_or_else(|| known.map(|k| k.passphrase_protected).unwrap_or(false)),
+                created_at: known.and_then(|k| k.created_at.clone()),
+            };
+            SshKeyView { key, has_private_file: d.has_private_file }
         })
-        .collect()
+        .collect();
+    // 파일이 없는 사이드카 기록도 남긴다 — 백업에서 가져왔지만 이 기기엔
+    // 개인 키가 없는 경우다. 목록에서 지워 버리면 "이 기기에 개인 키 파일이
+    // 없습니다" 안내가 통째로 사라진다.
+    for k in records {
+        if !out.iter().any(|v| v.key.name == k.name) {
+            // 스캔이 형식을 못 알아본 파일일 수도 있으니 존재 여부는 직접 본다.
+            let has = key_path_for(keys_dir, &k.name).exists();
+            out.push(SshKeyView { key: k, has_private_file: has });
+        }
+    }
+    out.sort_by(|a, b| a.key.name.to_lowercase().cmp(&b.key.name.to_lowercase()));
+    out
 }
 
 pub fn create_ssh_key(
@@ -101,7 +138,7 @@ pub fn create_ssh_key(
 
     let public_key = fs::read_to_string(pub_path(&key_path))?.trim().to_string();
     store.insert_key(&NewKey {
-        name: dto.name.clone(),
+        name: key_file_name(&dto.name),
         public_key,
         key_type,
         key_size,
@@ -137,7 +174,7 @@ pub fn import_ssh_key(
         dto.key_type
     };
     store.insert_key(&NewKey {
-        name: dto.name.clone(),
+        name: key_file_name(&dto.name),
         public_key,
         key_type,
         key_size: 256,
@@ -187,7 +224,7 @@ pub fn update_ssh_key(
     };
     store.update_key_meta(&KeyMetaUpdate {
         id: dto.id,
-        name: dto.name.clone(),
+        name: key_file_name(&dto.name),
         public_key,
         key_type,
         passphrase_protected,
@@ -303,6 +340,7 @@ mod tests {
         let mut store = Store::new(
             dir.path().join("sshub.json"),
             dir.path().join(".ssh").join("config"),
+            dir.path().join("ssh_keys"),
             dir.path().join("ssh_keys"),
         );
         store.load();

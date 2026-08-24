@@ -46,6 +46,11 @@ pub enum CoreError {
     #[error("같은 이름의 키 파일이 이미 있습니다.")]
     KeyFileNameTaken,
 
+    /// 키가 `~/.ssh`에 살게 된 뒤로 이름 하나가 `config`나 `known_hosts`를
+    /// 덮어쓸 수 있다 — 이름 단계에서 막는다.
+    #[error("'{0}'은(는) SSH가 쓰는 파일 이름이라 키 이름으로 쓸 수 없습니다.")]
+    ReservedKeyFileName(String),
+
     #[error("이 기기에 개인 키 파일이 없습니다.")]
     PrivateFileMissing,
 

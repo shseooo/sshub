@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use gpui::{
     div, App, AppContext, Bounds, ClipboardItem, Context, Entity, EntityInputHandler, EventEmitter,
-    FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, KeyDownEvent, Keystroke,
+    FocusHandle, Focusable, InteractiveElement, IntoElement, KeyDownEvent, Keystroke,
     ParentElement, Pixels, Render, Styled, Subscription, UTF16Selection, Window,
 };
 use sshub_terminal::{Event as TerminalEvent, LinkTarget, SpawnSpec, Terminal, TerminalBuilder};
@@ -276,7 +276,6 @@ impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.focus_handle.is_focused(window);
         let terminal_theme = theme(cx).terminal.clone();
-        let bg = Hsla::from(terminal_theme.background);
         // 폰트 패밀리는 **테마에서** 읽는다. pane 생성 시점의 값을 들고 있으면
         // 설정에서 폰트를 바꿔도 이미 열린 터미널은 그대로라 재시작이 필요해진다
         // (크기·색은 이미 테마 경로를 타므로 패밀리만 예외로 둘 이유가 없다).
@@ -293,7 +292,10 @@ impl Render for TerminalView {
             .track_focus(&self.focus_handle)
             .key_context("Terminal")
             .size_full()
-            .bg(bg)
+            // 표면 색은 **부모**(`TerminalWorkspace` 루트)가 한 겹만 칠한다.
+            // 여기서 또 칠하면 반투명 알파가 두 번 합성돼(0.6² → 0.84) 창
+            // 반투명이 거의 보이지 않는다. 기본 배경 셀은 어차피 그리지 않으므로
+            // (`build_bg_runs`) 이 뷰는 배경 없이 글자만 얹는다.
             .on_key_down(cx.listener(Self::on_key_down))
             .child(element)
     }

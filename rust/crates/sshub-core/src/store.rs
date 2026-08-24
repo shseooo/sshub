@@ -87,6 +87,11 @@ pub struct Store {
     path: PathBuf,
     ssh_config_path: PathBuf,
     keys_dir: PathBuf,
+    /// 서버별 PEM(`pem_server_<id>`)은 앱 데이터 디렉터리에 남는다 —
+    /// 사용자가 붙여넣은 blob이라 `~/.ssh`에 섞을 이유가 없다.
+    pem_dir: PathBuf,
+    /// 마지막 로드에서 이관한 레거시 키 결과 (UI 안내용).
+    key_migrations: Vec<crate::key_migration::KeyMigration>,
     sidecar: SidecarData,
     doc: Document,
     /// config를 읽지 못했다(권한 등). 이 상태에서 쓰기를 허용하면 빈 문서로
@@ -103,11 +108,18 @@ impl Store {
     /// 경로 3종을 **반드시** 명시한다. 기본값으로 진짜 `~/.ssh/config`를
     /// 집어드는 생성자는 두지 않는다 — 테스트가 사용자의 실제 데이터를
     /// 건드린 적이 있어서, 그 사고를 타입 수준에서 불가능하게 만들었다.
-    pub fn new(store_path: PathBuf, ssh_config_path: PathBuf, keys_dir: PathBuf) -> Store {
+    pub fn new(
+        store_path: PathBuf,
+        ssh_config_path: PathBuf,
+        keys_dir: PathBuf,
+        pem_dir: PathBuf,
+    ) -> Store {
         Store {
             path: store_path,
             ssh_config_path,
             keys_dir,
+            pem_dir,
+            key_migrations: Vec::new(),
             sidecar: SidecarData::default(),
             doc: Document::parse(""),
             config_error: None,
@@ -123,6 +135,15 @@ impl Store {
 
     pub fn keys_dir(&self) -> &Path {
         &self.keys_dir
+    }
+
+    pub fn pem_dir(&self) -> &Path {
+        &self.pem_dir
+    }
+
+    /// 마지막 로드에서 옛 디렉터리로부터 이관한 키들.
+    pub fn key_migrations(&self) -> &[crate::key_migration::KeyMigration] {
+        &self.key_migrations
     }
 
     /// 실패하지 않는다: 손상/읽기 불가 파일은 `.corrupt.<ts>`로 보존하고 빈
@@ -147,7 +168,7 @@ impl Store {
             // 되돌릴 길을 먼저 만든다 (v2 사이드카는 Electron 앱이 못 읽는다).
             let dest = path_with_suffix(&self.path, &format!(".v1.{}", now_stamp()));
             let _ = fs::copy(&self.path, dest);
-            sidecar = migrate_v1(&v1, &mut self.doc, &self.keys_dir);
+            sidecar = migrate_v1(&v1, &mut self.doc, &self.keys_dir, &self.pem_dir);
             dirty = true;
             // config 기록이 실패하면 사이드카도 쓰지 않는다 — v2 사이드카만
             // 남고 config에 블록이 없으면 서버가 통째로 사라져 보인다.
@@ -156,6 +177,11 @@ impl Store {
                 persist = false;
             }
         }
+
+        // 옛 앱 키 디렉터리에만 있던 키를 `~/.ssh`로 들여온다. `~/.ssh`의
+        // 파일은 절대 덮어쓰지 않고, 이름이 같은데 내용이 다르면 둘 다 둔다.
+        self.key_migrations =
+            crate::key_migration::migrate_legacy_keys(&self.pem_dir, &self.keys_dir);
 
         self.sidecar = sidecar;
         let assigned = self.rebuild();
@@ -337,6 +363,7 @@ impl Store {
                     let (a, k) = derive_auth(
                         h.identity_file.as_deref(),
                         &self.keys_dir,
+                        &self.pem_dir,
                         &self.sidecar.keys,
                         meta.id,
                     );
@@ -414,7 +441,7 @@ impl Store {
     /// 지우지 않는다 — 사용자가 손으로 넣은 키 줄을 날린 회귀가 있었다.)
     fn write_host(&mut self, alias: &str, server: &Server, clear_owned: bool) {
         let keys = self.sidecar.keys.clone();
-        let spec = host_spec(server, &self.keys_dir, &keys);
+        let spec = host_spec(server, &self.keys_dir, &self.pem_dir, &keys);
         self.doc.upsert_host(alias, &spec);
         if clear_owned {
             if spec.proxy_jump.is_none() {
@@ -598,13 +625,19 @@ impl Store {
         self.find_key(id).ok_or(CoreError::KeyNotFoundId(id))
     }
 
+    /// 키 이름은 곧 `~/.ssh` 안의 파일명이다 — 경계에서 새니타이즈해 이
+    /// 불변식을 강제한다. 안 그러면 config의 `IdentityFile`이 존재하지 않는
+    /// 경로를 가리키고(공백이 든 이름 등), 백업에서 가져온 이름이 경로로
+    /// 새어 들어올 수도 있다.
     pub fn insert_key(&mut self, nk: &NewKey) -> Result<SshKey, CoreError> {
+        let nk = &NewKey { name: crate::key_files::key_file_name(&nk.name), ..nk.clone() };
         let (store, key) = key_ops::insert_key(&self.key_slice(), nk, &now_iso());
         self.commit_keys(store)?;
         Ok(key)
     }
 
     pub fn update_key_meta(&mut self, u: &KeyMetaUpdate) -> Result<SshKey, CoreError> {
+        let u = &KeyMetaUpdate { name: crate::key_files::key_file_name(&u.name), ..u.clone() };
         let (store, key) = key_ops::update_key_meta(&self.key_slice(), u)?;
         self.commit_keys(store)?;
         Ok(key)
@@ -677,7 +710,7 @@ mod tests {
             self.dir.path().join("ssh_keys")
         }
         fn open(&self) -> Store {
-            let mut s = Store::new(self.store_path(), self.config_path(), self.keys_dir());
+            let mut s = Store::new(self.store_path(), self.config_path(), self.keys_dir(), self.keys_dir());
             s.load();
             s
         }
@@ -803,7 +836,7 @@ mod tests {
     #[test]
     fn get_key_error_includes_the_id() {
         let ctx = Ctx::new();
-        let s = Store::new(ctx.store_path(), ctx.config_path(), ctx.keys_dir());
+        let s = Store::new(ctx.store_path(), ctx.config_path(), ctx.keys_dir(), ctx.keys_dir());
         assert_eq!(s.get_key(42).unwrap_err().to_string(), "SSH key not found: 42");
     }
 
@@ -824,7 +857,7 @@ mod tests {
         d.notes = Some("메모".into());
         s.insert_server(&d).unwrap();
         let text = fs::read_to_string(ctx.store_path()).unwrap();
-        assert!(text.starts_with("{\n  \"version\": 2,\n  \"nextHostId\": 2,"), "{text}");
+        assert!(text.starts_with("{\n  \"version\": 3,\n  \"nextHostId\": 2,"), "{text}");
         // 접속 정보는 사이드카에 없다 — config가 원본이다.
         assert!(!text.contains("hostName"), "{text}");
         assert!(!text.contains("\"host\""), "{text}");
@@ -1116,7 +1149,7 @@ mod tests {
         let ctx = Ctx::new();
         ctx.write_config("Host keep\n  HostName 1.1.1.1\n");
         fs::set_permissions(ctx.config_path(), fs::Permissions::from_mode(0o000)).unwrap();
-        let mut s = Store::new(ctx.store_path(), ctx.config_path(), ctx.keys_dir());
+        let mut s = Store::new(ctx.store_path(), ctx.config_path(), ctx.keys_dir(), ctx.keys_dir());
         s.load();
         let err = s.insert_server(&dto("new")).unwrap_err();
         assert!(matches!(err, CoreError::ConfigUnreadable(_)), "{err}");

@@ -1,4 +1,4 @@
-//! `sshub.json` v2 — **앱 전용 메타데이터 사이드카**.
+//! `sshub.json` v3 — **앱 전용 메타데이터 사이드카**.
 //!
 //! Phase 2에서 접속 정보(HostName/Port/User/ProxyJump/IdentityFile)의 원본은
 //! `~/.ssh/config`로 옮겨갔다. 여기 남는 것은 config로 표현할 수 없는 것뿐이다:
@@ -8,6 +8,11 @@
 //! `id`는 절대 바뀌면 안 된다 — 저장된 터미널 레이아웃이 `serverId`를 들고
 //! 있고, 서버별 PEM 파일 이름이 `pem_server_<id>`다. 별칭(Host)이 바뀌어도
 //! id는 따라 이동한다.
+//!
+//! v3에서 키에도 같은 원칙을 적용했다: 목록의 원본은 `~/.ssh` 디렉터리이고
+//! 사이드카의 `keys`는 **파일명 → 메타데이터**(id·생성 시각·타입 라벨) 뿐이다.
+//! 그래서 `SshKey::name`은 이제 표시용 이름이 아니라 파일 이름 자체다
+//! (v2는 "이름 X ↔ 파일 `id_X`"였다 — 읽을 때 그 규칙으로 되돌린다).
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -17,7 +22,10 @@ use serde::{Deserialize, Serialize};
 use crate::model::{AuthType, Server, SshKey, StoreData};
 use crate::ssh_config::{alias_for_v1, host_spec, is_writable_alias, Document, HostSpec};
 
-pub const SIDECAR_VERSION: i64 = 2;
+pub const SIDECAR_VERSION: i64 = 3;
+
+/// 키 이름이 아직 표시용 이름이던 마지막 버전 (읽기 전용 호환 경로).
+pub const SIDECAR_VERSION_V2: i64 = 2;
 
 /// 별칭 하나에 붙는 앱 전용 메타데이터.
 ///
@@ -55,9 +63,9 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
-/// `sshub.json` v2 전체. `hosts`가 `BTreeMap`인 이유는 저장 순서를 별칭
+/// `sshub.json` v3 전체. `hosts`가 `BTreeMap`인 이유는 저장 순서를 별칭
 /// 사전순으로 고정하기 위해서다 — 같은 상태면 같은 바이트가 나와야 쓸데없는
-/// 디스크 쓰기와 diff 노이즈가 없다.
+/// 디스크 쓰기와 diff 노이즈가 없다. `keys`의 `name`은 `~/.ssh` 안의 파일명이다.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SidecarData {
@@ -101,6 +109,25 @@ impl SidecarData {
         self.next_host_id += 1;
         id
     }
+
+    /// 디스크에서 처음 본 키 파일에 배정할 id. 배정 즉시 사이드카를 저장해야
+    /// 다음 실행에서도 같은 번호가 나온다 (서버 편집 화면이 `keyId`로 키를
+    /// 가리키므로, 번호가 밀리면 엉뚱한 키가 선택된다).
+    pub fn take_key_id(&mut self) -> i64 {
+        let id = self.next_key_id;
+        self.next_key_id += 1;
+        id
+    }
+
+    /// v2 사이드카를 v3로 올린다 — 표시용 이름을 그 시절의 파일명으로 되돌린다.
+    /// 이 변환이 없으면 이관된 `~/.ssh/id_work_key`가 사이드카의 `work key`와
+    /// 만나지 못해 키가 새 id를 받고 서버의 `keyId`가 허공을 가리킨다.
+    pub fn upgrade_v2_key_names(mut self) -> SidecarData {
+        for k in self.keys.iter_mut() {
+            k.name = crate::key_files::legacy_key_file_name(&k.name);
+        }
+        self
+    }
 }
 
 // -- 인증 방식 유추 ---------------------------------------------------------
@@ -109,25 +136,29 @@ impl SidecarData {
 /// (= 앱이 처음 보는, 손으로 쓴 호스트).
 ///
 /// 규칙 네 가지:
-/// 1. 앱 키 파일(`<keys_dir>/id_<name>`)과 일치 → `Key` + 그 키의 id
-/// 2. `<keys_dir>/pem_server_<id>`와 일치 → `Pem`
-/// 3. 그 외 `IdentityFile` → `Key` + `key_id: None` (사용자가 직접 관리하는 키)
+/// 1. `~/.ssh` 안의 키 파일과 일치 → `Key` + 그 키의 id
+/// 2. `<pem_dir>/pem_server_<id>`와 일치 → `Pem`
+/// 3. 그 외 `IdentityFile` → `Key` + `key_id: None` (앱이 모르는 위치의 키)
 /// 4. `IdentityFile` 없음 → `Agent`
+///
+/// 경로 비교는 `resolve_identity_path`를 거친다 — 손으로 쓴 config는 거의
+/// 항상 `~/.ssh/id_rsa` 표기라 문자열 비교로는 절대 맞지 않는다.
 pub fn derive_auth(
     identity_file: Option<&str>,
     keys_dir: &Path,
+    pem_dir: &Path,
     keys: &[SshKey],
     host_id: i64,
 ) -> (AuthType, Option<i64>) {
     let Some(raw) = identity_file else { return (AuthType::Agent, None) };
-    let path = Path::new(raw);
-    if let Some(key) = keys
-        .iter()
-        .find(|k| keys_dir.join(crate::key_files::key_file_name(&k.name)) == path)
-    {
+    let path = crate::ssh_config::resolve_identity_path(raw, keys_dir);
+    if let Some(key) = keys.iter().find(|k| {
+        crate::key_files::safe_file_component(&k.name)
+            .is_some_and(|f| keys_dir.join(f) == path)
+    }) {
         return (AuthType::Key, Some(key.id));
     }
-    if keys_dir.join(crate::key_files::server_pem_file_name(host_id)) == path {
+    if pem_dir.join(crate::key_files::server_pem_file_name(host_id)) == path {
         return (AuthType::Pem, None);
     }
     (AuthType::Key, None)
@@ -201,13 +232,24 @@ fn fill_missing_only(doc: &Document, alias: &str, mut spec: HostSpec) -> HostSpe
 ///   사용자에게 중복 블록이 생기지 않는다.
 /// - 이미 있는 블록의 접속 필드는 건드리지 않고 빠진 줄만 채운다.
 /// - `auth`/`keyId`는 항상 기록한다 — config가 표현할 수 없는 정보다.
-pub fn migrate_v1(v1: &StoreData, doc: &mut Document, keys_dir: &Path) -> SidecarData {
+pub fn migrate_v1(
+    v1: &StoreData,
+    doc: &mut Document,
+    keys_dir: &Path,
+    pem_dir: &Path,
+) -> SidecarData {
+    // v1의 키 이름도 v2와 같은 "이름 X ↔ 파일 id_X" 규칙이었다.
+    let keys: Vec<SshKey> = v1
+        .keys
+        .iter()
+        .map(|k| SshKey { name: crate::key_files::legacy_key_file_name(&k.name), ..k.clone() })
+        .collect();
     let mut sidecar = SidecarData {
         version: SIDECAR_VERSION,
         next_host_id: v1.next_server_id.max(1),
         next_key_id: v1.next_key_id.max(1),
         hosts: BTreeMap::new(),
-        keys: v1.keys.clone(),
+        keys,
     };
 
     // id 순서로 처리해야 별칭 충돌 해소가 결정적이다 (같은 입력 → 같은 결과).
@@ -217,7 +259,8 @@ pub fn migrate_v1(v1: &StoreData, doc: &mut Document, keys_dir: &Path) -> Sideca
     let mut taken: HashSet<String> = HashSet::new();
     for server in &servers {
         let alias = resolve_alias(doc, &taken, &alias_for_v1(server), server.id);
-        let spec = fill_missing_only(doc, &alias, host_spec(server, keys_dir, &v1.keys));
+        let spec =
+            fill_missing_only(doc, &alias, host_spec(server, keys_dir, pem_dir, &sidecar.keys));
         doc.upsert_host(&alias, &spec);
         sidecar.hosts.insert(alias.clone(), meta_from_server(server));
         taken.insert(alias);
@@ -271,14 +314,19 @@ mod tests {
         let mut s = srv(1, "web");
         s.group_name = Some("prod".into());
         let mut doc = Document::parse("");
-        let side = migrate_v1(&v1(vec![s]), &mut doc, Path::new("/keys"));
+        let side = migrate_v1(&v1(vec![s]), &mut doc, Path::new("/keys"), Path::new("/pem"));
         assert!(side.hosts.contains_key("prod-web"), "{:?}", side.hosts.keys());
         assert!(doc.to_string().contains("Host prod-web"));
     }
 
     #[test]
     fn preserves_v1_ids_and_advances_the_counter_past_them() {
-        let side = migrate_v1(&v1(vec![srv(3, "a"), srv(11, "b")]), &mut Document::parse(""), Path::new("/k"));
+        let side = migrate_v1(
+            &v1(vec![srv(3, "a"), srv(11, "b")]),
+            &mut Document::parse(""),
+            Path::new("/k"),
+            Path::new("/p"),
+        );
         assert_eq!(side.hosts["a"].id, 3);
         assert_eq!(side.hosts["b"].id, 11);
         assert_eq!(side.next_host_id, 12);
@@ -290,7 +338,7 @@ mod tests {
         let mut s = srv(1, "web");
         s.host = "10.0.0.1".into();
         s.port = 2222;
-        migrate_v1(&v1(vec![s]), &mut doc, Path::new("/k"));
+        migrate_v1(&v1(vec![s]), &mut doc, Path::new("/k"), Path::new("/p"));
         let out = doc.to_string();
         // HostName은 config 값 그대로, 빠져 있던 User/Port만 채워진다.
         assert!(out.contains("HostName 192.168.0.9"), "{out}");
@@ -303,7 +351,7 @@ mod tests {
     fn sidesteps_an_alias_owned_by_a_read_only_block_instead_of_dropping_the_server() {
         // `Host a b`는 앱이 편집할 수 없다 — 그래도 v1 서버 "a"는 살아남아야 한다.
         let mut doc = Document::parse("Host a b\n  User multi\n");
-        let side = migrate_v1(&v1(vec![srv(7, "a")]), &mut doc, Path::new("/k"));
+        let side = migrate_v1(&v1(vec![srv(7, "a")]), &mut doc, Path::new("/k"), Path::new("/p"));
         assert!(!side.hosts.contains_key("a"));
         assert_eq!(side.hosts["a-7"].id, 7);
         assert!(doc.to_string().starts_with("Host a b\n  User multi\n"));
@@ -311,7 +359,7 @@ mod tests {
 
     #[test]
     fn neutralizes_wildcards_in_a_v1_server_name() {
-        let side = migrate_v1(&v1(vec![srv(1, "*")]), &mut Document::parse(""), Path::new("/k"));
+        let side = migrate_v1(&v1(vec![srv(1, "*")]), &mut Document::parse(""), Path::new("/k"), Path::new("/p"));
         assert_eq!(side.hosts.keys().collect::<Vec<_>>(), vec!["_"]);
     }
 
@@ -319,39 +367,84 @@ mod tests {
     fn records_auth_and_key_id_because_config_cannot_express_them() {
         let mut s = srv(1, "web");
         s.auth_type = AuthType::Password;
-        let side = migrate_v1(&v1(vec![s]), &mut Document::parse(""), Path::new("/k"));
+        let side =
+            migrate_v1(&v1(vec![s]), &mut Document::parse(""), Path::new("/k"), Path::new("/p"));
         assert_eq!(side.hosts["web"].auth, Some(AuthType::Password));
+    }
+
+    fn key(id: i64, name: &str) -> SshKey {
+        SshKey { id, name: name.into(), key_type: KeyType::Ed25519, ..Default::default() }
     }
 
     #[test]
     fn derives_agent_when_there_is_no_identity_file() {
-        assert_eq!(derive_auth(None, Path::new("/k"), &[], 1), (AuthType::Agent, None));
+        assert_eq!(
+            derive_auth(None, Path::new("/home/me/.ssh"), Path::new("/p"), &[], 1),
+            (AuthType::Agent, None)
+        );
     }
 
     #[test]
-    fn derives_key_with_id_for_an_app_managed_key_file() {
-        let key = SshKey {
-            id: 4,
-            name: "work key".into(),
-            key_type: KeyType::Ed25519,
-            ..Default::default()
-        };
-        let got = derive_auth(Some("/k/id_work_key"), Path::new("/k"), &[key], 1);
+    fn derives_key_with_id_for_a_key_that_lives_in_the_ssh_directory() {
+        let keys = [key(4, "id_rsa_seod")];
+        let got = derive_auth(
+            Some("/home/me/.ssh/id_rsa_seod"),
+            Path::new("/home/me/.ssh"),
+            Path::new("/p"),
+            &keys,
+            1,
+        );
         assert_eq!(got, (AuthType::Key, Some(4)));
     }
 
     #[test]
-    fn derives_pem_for_the_per_server_pem_path() {
-        let got = derive_auth(Some("/k/pem_server_9"), Path::new("/k"), &[], 9);
-        assert_eq!(got, (AuthType::Pem, None));
-        // 다른 서버의 PEM 경로는 이 서버의 것이 아니다 → 일반 키로 본다.
-        assert_eq!(derive_auth(Some("/k/pem_server_9"), Path::new("/k"), &[], 3).0, AuthType::Key);
+    fn understands_the_tilde_spelling_people_actually_write() {
+        // 손으로 쓴 config는 절대 경로를 쓰지 않는다 — 이걸 못 읽으면 사용자의
+        // 진짜 키 셋 중 어느 것도 호스트와 이어지지 않는다.
+        let keys = [key(7, "id_HIS-CodeCommit-User")];
+        let got = derive_auth(
+            Some("~/.ssh/id_HIS-CodeCommit-User"),
+            Path::new("/home/me/.ssh"),
+            Path::new("/p"),
+            &keys,
+            1,
+        );
+        assert_eq!(got, (AuthType::Key, Some(7)));
     }
 
     #[test]
-    fn derives_key_without_id_for_a_hand_managed_identity_file() {
-        let got = derive_auth(Some("/home/me/.ssh/id_rsa"), Path::new("/k"), &[], 1);
+    fn derives_pem_for_the_per_server_pem_path_in_the_app_data_dir() {
+        let ssh = Path::new("/home/me/.ssh");
+        let pem = Path::new("/appdata/ssh_keys");
+        assert_eq!(
+            derive_auth(Some("/appdata/ssh_keys/pem_server_9"), ssh, pem, &[], 9),
+            (AuthType::Pem, None)
+        );
+        // 다른 서버의 PEM 경로는 이 서버의 것이 아니다 → 일반 키로 본다.
+        assert_eq!(
+            derive_auth(Some("/appdata/ssh_keys/pem_server_9"), ssh, pem, &[], 3).0,
+            AuthType::Key
+        );
+    }
+
+    #[test]
+    fn derives_key_without_id_for_an_identity_file_outside_the_ssh_directory() {
+        let got = derive_auth(
+            Some("/opt/secrets/deploy_key"),
+            Path::new("/home/me/.ssh"),
+            Path::new("/p"),
+            &[],
+            1,
+        );
         assert_eq!(got, (AuthType::Key, None));
+    }
+
+    #[test]
+    fn upgrading_a_v2_sidecar_restores_the_file_names_of_that_era() {
+        let side = SidecarData { keys: vec![key(1, "work key")], ..Default::default() }
+            .upgrade_v2_key_names();
+        assert_eq!(side.keys[0].name, "id_work_key");
+        assert_eq!(side.keys[0].id, 1, "id는 절대 바뀌지 않는다");
     }
 
     #[test]

@@ -8,11 +8,11 @@
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::CoreError;
 use crate::fsutil::{atomic_write_0600, rm_force};
-use crate::key_files::{key_file_name, server_pem_file_name};
+use crate::key_files::{safe_file_component, server_pem_file_name};
 use crate::model::{AuthType, Server, SshKey};
 use crate::ssh_config::document::{Document, HostSpec};
 use crate::ssh_config::backups_to_prune;
@@ -44,29 +44,61 @@ pub(crate) fn alias_for_v1(server: &Server) -> String {
     }
 }
 
+/// `IdentityFile` 값을 비교 가능한 절대 경로로 편다.
+///
+/// 사람이 쓴 config는 거의 항상 `~/.ssh/id_rsa` 꼴이고, 앱은 절대 경로를 쓴다.
+/// 두 표기를 같은 것으로 보지 못하면 "이 키를 쓰는 호스트"를 영영 못 찾는다
+/// (이름 변경 시 접속 경로 추적, 삭제 시 영향 호스트 수 모두 여기에 걸린다).
+///
+/// `~`는 진짜 홈 디렉터리를 읽는 대신 **`keys_dir`의 부모**로 편다 —
+/// `keys_dir`가 `<home>/.ssh`라는 사실을 이용한 것으로, 테스트가 임시
+/// 디렉터리 안에 완전히 갇힌 채로도 같은 규칙이 성립한다.
+pub fn resolve_identity_path(raw: &str, keys_dir: &Path) -> PathBuf {
+    let trimmed = raw.trim().trim_matches('"');
+    match trimmed.strip_prefix("~/") {
+        Some(rest) => match keys_dir.parent() {
+            Some(home) => home.join(rest),
+            None => PathBuf::from(trimmed),
+        },
+        None => PathBuf::from(trimmed),
+    }
+}
+
 /// 이 서버로 접속할 때 실제로 쓰는 개인 키 경로. 키 레코드가 없거나 PEM
 /// 파일이 아직 없으면 `None` — 존재하지 않는 파일을 `IdentityFile`로 박아
 /// 두면 ssh가 그 키만 시도하다 실패한다.
+///
+/// `keys_dir`는 `~/.ssh`(키의 원본), `pem_dir`는 서버별 PEM이 있는 앱 데이터
+/// 디렉터리다 — 둘은 더 이상 같은 곳이 아니다.
 pub(crate) fn identity_file_for(
     server: &Server,
     keys_dir: &Path,
+    pem_dir: &Path,
     keys: &[SshKey],
 ) -> Option<String> {
     match server.auth_type {
         AuthType::Key => {
             let id = server.key_id?;
             let key = keys.iter().find(|k| k.id == id)?;
-            Some(keys_dir.join(key_file_name(&key.name)).to_string_lossy().into_owned())
+            // 키 이름은 이제 디스크의 파일명 그대로다 — 새니타이즈하면
+            // `id_ed25519@work` 같은 실제 파일을 놓친다.
+            let file = safe_file_component(&key.name)?;
+            Some(keys_dir.join(file).to_string_lossy().into_owned())
         }
         AuthType::Pem => {
-            let path = keys_dir.join(server_pem_file_name(server.id));
+            let path = pem_dir.join(server_pem_file_name(server.id));
             path.exists().then(|| path.to_string_lossy().into_owned())
         }
         AuthType::Password | AuthType::Agent => None,
     }
 }
 
-pub(crate) fn host_spec(server: &Server, keys_dir: &Path, keys: &[SshKey]) -> HostSpec {
+pub(crate) fn host_spec(
+    server: &Server,
+    keys_dir: &Path,
+    pem_dir: &Path,
+    keys: &[SshKey],
+) -> HostSpec {
     HostSpec {
         host_name: Some(server.host.clone()),
         // i64 → u16 범위를 벗어난 값은 ssh가 거부하므로 줄을 쓰지 않는다.
@@ -78,7 +110,7 @@ pub(crate) fn host_spec(server: &Server, keys_dir: &Path, keys: &[SshKey]) -> Ho
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string),
-        identity_file: identity_file_for(server, keys_dir, keys),
+        identity_file: identity_file_for(server, keys_dir, pem_dir, keys),
     }
 }
 
@@ -165,6 +197,7 @@ mod tests {
             let mut s = Store::new(
                 self.dir.path().join("sshub.json"),
                 self.config_path(),
+                self.keys(),
                 self.keys(),
             );
             s.load();
@@ -268,7 +301,8 @@ Host *
 
         let out = ctx.config();
         assert!(out.contains("    ProxyJump bastion"), "{out}");
-        let expected = ctx.keys().join("id_work_key");
+        // 키 이름이 곧 파일명이다 — `id_` 접두를 붙이지 않는다.
+        let expected = ctx.keys().join("work_key");
         assert!(out.contains(&format!("    IdentityFile {}", expected.display())), "{out}");
     }
 
