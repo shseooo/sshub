@@ -6,7 +6,8 @@ sshub(Electron + React)를 Rust 네이티브 GPUI 앱으로 전환한다. 터미
 ## 확정 결정
 
 1. 순수 GPUI 직접 구현 (gpui-component 미사용) — 모든 위젯 자작.
-2. 같은 레포 `rust/` 워크스페이스. Electron 코드는 패리티 검증까지 참조용 유지.
+2. 레포 루트가 곧 Cargo 워크스페이스다 (Electron 코드는 이전 완료 후 삭제 —
+   필요하면 `git log`에서 되찾는다).
 3. Zed풍 미니멀 다크 디자인 (CRT/phosphor 룩 폐기, 반투명 설정은 유지).
 
 ## 검증된 스택 (2026-08-21 crates.io 확인)
@@ -24,7 +25,7 @@ sshub(Electron + React)를 Rust 네이티브 GPUI 앱으로 전환한다. 터미
 ## 워크스페이스
 
 ```
-rust/
+.
 ├── Cargo.toml                  # workspace
 ├── docs/                       # 이 설계 문서들
 └── crates/
@@ -46,7 +47,7 @@ rust/
 ## 빌드/검증 명령
 
 ```bash
-cd rust && cargo build && cargo test          # 전 크레이트
+cargo build && cargo test          # 전 크레이트
 cargo run -p sshub                            # 앱 실행
 ```
 
@@ -60,7 +61,7 @@ cargo run -p sshub                            # 앱 실행
 5. ✅ 세션(ssh/cwd 상속/배너/재연결) + 스크롤백 영속화(hydrated 가드)
 6. ✅ 위젯 킷 + 페이지 5종 + 설정/단축키/i18n/테마
 7. 🔄 다중 창 + 앱 셸 통합(workspace/main) + 종료 순서
-8. ✅ 패키징 스크립트 (rust/install.sh — .app 번들 + ad-hoc 서명)
+8. ✅ 패키징 스크립트 (install.sh — .app 번들 + ad-hoc 서명)
 
 미구현(후속): pane 검색 UI(모델은 있음), 새 탭/분할 시 서버 선택 팝오버,
 컨텍스트 메뉴(재연결·다른 탭 닫기), OSC 52 클립보드, 드래그 엣지 자동 스크롤.

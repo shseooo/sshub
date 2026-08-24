@@ -107,7 +107,7 @@ Application::new().run(|cx| {
 ## 5. i18n
 
 **1회 codegen + 커밋** (build.rs 아님 — Rust 빌드가 Node에 의존하면 안 됨).
-`rust/scripts/gen_i18n.mjs`가 src/i18n/index.ts (192 키 × ko/en/ja) 파싱 →
+`scripts/gen_i18n.mjs`가 src/i18n/index.ts (192 키 × ko/en/ja) 파싱 →
 `i18n/generated.rs`:
 ```rust
 pub enum Lang { Ko, En, Ja }
