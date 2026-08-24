@@ -11,9 +11,6 @@ use crate::views::{current_lang, Page, ViewEvent};
 
 pub const SIDEBAR_WIDTH: f32 = 208.;
 pub const SIDEBAR_WIDTH_COLLAPSED: f32 = 56.;
-/// macOS 신호등이 앉는 자리 — 헤더를 그 아래로 밀어낸다.
-const TRAFFIC_LIGHT_INSET: f32 = 34.;
-
 const NAV_ITEMS: [(Page, Icon, TrKey); 4] = [
     (Page::Servers, Icon::Server, TrKey::NavServers),
     (Page::Terminal, Icon::Terminal, TrKey::NavTerminal),
@@ -131,7 +128,6 @@ impl Render for Sidebar {
             .flex_none()
             .w(px(width))
             .h_full()
-            .pt(px(TRAFFIC_LIGHT_INSET))
             .pb(px(8.))
             .px(px(8.))
             .gap(px(2.))

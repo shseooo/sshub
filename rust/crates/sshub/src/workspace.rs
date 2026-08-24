@@ -450,14 +450,13 @@ impl Render for Workspace {
             (None, _) => div().into_any_element(),
         };
 
-        // 36px 드래그 스트립. `appears_transparent`라 네이티브 타이틀바가
-        // 보이지 않으므로 창 이동을 직접 얹는다.
+        // 36px 드래그 스트립. `appears_transparent`라 네이티브 타이틀바가 없어
+        // 창 이동을 직접 얹는다. **레이아웃 흐름 안**에 둔다 — 겹쳐 그리면 그
+        // 아래 36px의 클릭이 전부 창 이동으로 먹혀서, 터미널 탭을 끌면 창이
+        // 통째로 움직였다(실제 버그). 흐름 안에 있으면 그런 일이 구조적으로 없다.
         let titlebar = div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
             .h(px(TITLEBAR_HEIGHT))
+            .flex_shrink_0()
             .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, window, _cx| {
                 window.start_window_move();
             });
@@ -473,6 +472,7 @@ impl Render for Workspace {
             .text_color(t.text)
             .on_action(cx.listener(Self::on_new_window))
             .on_action(cx.listener(Self::on_move_tab_to_new_window))
+            .child(titlebar)
             .child(
                 div()
                     .flex()
@@ -484,11 +484,11 @@ impl Render for Workspace {
                         div()
                             .flex_1()
                             .min_w(px(0.))
-                            // 사이드바가 신호등을 피해 자체 상단 패딩을 갖는다.
+                            .flex()
+                            .flex_col()
                             .child(content),
                     ),
             )
-            .child(titlebar)
             .child(render_toast_stack(&self.toasts, window, cx))
             // 모달은 항상 마지막 — 아래 레이어를 완전히 가려야 한다.
             .children(
