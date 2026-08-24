@@ -20,6 +20,7 @@ use sshub_splits::{DropSide, PaneNode, SessionId, SplitDirection, SplitId, TabId
 
 use crate::terminal_view::TerminalView;
 use crate::theme::{with_alpha, Theme};
+use crate::ui::tooltip::TextTooltip;
 use crate::ui::TextInput;
 
 /// 자식 pane의 최소 비율 — 이 아래로는 드래그해도 줄지 않는다.
@@ -527,9 +528,12 @@ fn render_pane_header(leaf: &TerminalLeaf, ctx: &PaneTreeCtx<'_>, focused: bool)
 
     let title: AnyElement = match renaming {
         Some(input) => div().w(px(140.0)).flex_shrink_0().child(input).into_any_element(),
+        // 탭과 같은 규칙 — nowrap 없이 overflow만 걸면 긴 이름이 접혀 헤더 높이를
+        // 밀어낸다. 전체 이름은 헤더 호버 툴팁에서 본다.
         None => div()
             .flex_grow()
-            .overflow_hidden()
+            .min_w(px(0.))
+            .truncate()
             .text_xs()
             .text_color(if focused { theme.text } else { theme.text_muted })
             .child(label.clone())
@@ -544,8 +548,11 @@ fn render_pane_header(leaf: &TerminalLeaf, ctx: &PaneTreeCtx<'_>, focused: bool)
         session_id: session_id.clone(),
     };
 
+    let tooltip_label = label.clone();
     div()
         .id(element_id("pane-header", session_id.as_str()))
+        // 잘린 이름 전체 보기 (gpui가 500ms 호버 지연을 준다).
+        .tooltip(move |_window, cx| TextTooltip::view(tooltip_label.clone(), cx))
         .flex()
         .flex_row()
         .items_center()

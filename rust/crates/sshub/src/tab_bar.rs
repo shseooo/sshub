@@ -20,6 +20,7 @@ use sshub_splits::{tab_title, TabId, TerminalTab};
 
 use crate::split_view::{element_id, DragGhost, GeometryRef, PaneDrag, TabDrag};
 use crate::theme::Theme;
+use crate::ui::tooltip::TextTooltip;
 use crate::ui::TextInput;
 
 pub const TAB_BAR_HEIGHT: f32 = 30.0;
@@ -142,9 +143,11 @@ fn render_tab(tab: &TerminalTab, ctx: &TabBarCtx<'_>) -> AnyElement {
 
     let label: AnyElement = match renaming {
         Some(input) => div().w(px(120.0)).child(input).into_any_element(),
+        // `truncate` = overflow-hidden + nowrap + ellipsis. nowrap이 없으면 긴
+        // 이름이 두 줄로 접혀 탭 높이를 밀어낸다(실제 증상).
         None => div()
             .max_w(px(180.0))
-            .overflow_hidden()
+            .truncate()
             .text_sm()
             .text_color(if active { theme.text } else { theme.text_muted })
             .child(title.clone())
@@ -162,8 +165,11 @@ fn render_tab(tab: &TerminalTab, ctx: &TabBarCtx<'_>) -> AnyElement {
     let drop_pane = ctx.handlers.clone();
     let ghost = title.clone();
 
+    let tooltip_title = title.clone();
     let mut root = div()
         .id(element_id("tab", tab.id.as_str()))
+        // 이름이 잘렸을 때 전체를 볼 수 있게 — gpui가 500ms 호버 지연을 준다.
+        .tooltip(move |_window, cx| TextTooltip::view(tooltip_title.clone(), cx))
         .relative()
         .flex()
         .flex_row()

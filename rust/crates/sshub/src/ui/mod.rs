@@ -12,6 +12,7 @@ pub mod select;
 pub mod text_area;
 pub mod text_input;
 pub mod toast;
+pub mod tooltip;
 
 pub use button::{Button, ButtonVariant};
 pub use checkbox::Checkbox;
