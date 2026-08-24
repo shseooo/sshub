@@ -207,7 +207,7 @@ impl TerminalWorkspace {
             .registry
             .update(cx, |reg, _| reg.prune_scrollback(&live));
         workspace.sync_sessions(window, cx);
-        workspace.focus_first_pane(window, cx);
+        workspace.focus_active_pane(window, cx);
         workspace
     }
 
@@ -974,26 +974,40 @@ impl TerminalWorkspace {
         cx.notify();
     }
 
-    fn focus_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(session) = self.focused_pane.clone() else {
-            return self.focus_first_pane(window, cx);
-        };
-        if let Some(view) = self.views.get(&session) {
-            window.focus(&view.read(cx).focus_handle(cx));
+    /// 이 워크스페이스로 키 입력을 가져온다.
+    ///
+    /// pane 뷰를 잡지 못하면 워크스페이스 자신이라도 잡는다 — ⌘1 같은 탭 액션
+    /// 핸들러가 이 노드에 달려 있어서, 포커스가 이 서브트리 밖에 있으면 키를
+    /// 눌러도 액션이 전달되지 않는다(터미널을 클릭해야만 동작하던 이유).
+    pub fn focus_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.focus_some_pane(window, cx) {
+            window.focus(&self.focus_handle);
         }
     }
 
-    fn focus_first_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(index) = self.active_index() else {
-            return;
+    /// 활성 탭 안에서 포커스할 pane을 고른다 — 이미 포커스된 pane이 활성 탭
+    /// 소속이면 그대로, 아니면 활성 탭의 첫 pane. 성공 여부를 돌려준다.
+    ///
+    /// 소속 확인이 없으면 탭을 바꿔도 **이전 탭의** pane에 포커스가 남아, 키
+    /// 입력이 보이지도 않는 터미널로 들어간다.
+    fn focus_some_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let in_active_tab = self
+            .focused_pane
+            .clone()
+            .filter(|s| self.tab_of_pane(s) == self.active_tab);
+        let target = in_active_tab.or_else(|| {
+            let index = self.active_index()?;
+            leaves(&self.tabs[index].root).first().map(|l| l.session_id.clone())
+        });
+        let Some(session) = target else {
+            return false;
         };
-        let Some(first) = leaves(&self.tabs[index].root).first().map(|l| l.session_id.clone()) else {
-            return;
+        let Some(view) = self.views.get(&session) else {
+            return false;
         };
-        self.focused_pane = Some(first.clone());
-        if let Some(view) = self.views.get(&first) {
-            window.focus(&view.read(cx).focus_handle(cx));
-        }
+        window.focus(&view.read(cx).focus_handle(cx));
+        self.focused_pane = Some(session);
+        true
     }
 
     /// 탭 직접 선택. `index`가 `None`이면 **마지막 탭**(⌘9의 macOS/Chrome/Zed
@@ -1008,7 +1022,7 @@ impl TerminalWorkspace {
         };
         self.active_tab = Some(id);
         // 탭만 바꾸고 포커스를 두면 키 입력이 안 보이는 pane으로 흘러간다.
-        self.focus_first_pane(window, cx);
+        self.focus_active_pane(window, cx);
         self.persist_layout(cx);
         cx.notify();
     }
@@ -1452,7 +1466,7 @@ impl TerminalWorkspace {
                 select
                     .update(cx, |this, cx| {
                         this.active_tab = Some(tab_id);
-                        this.focus_first_pane(window, cx);
+                        this.focus_active_pane(window, cx);
                         this.persist_layout(cx);
                         cx.notify();
                     })

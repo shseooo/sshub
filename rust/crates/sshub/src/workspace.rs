@@ -65,6 +65,9 @@ pub struct Workspace {
     terminal: Entity<TerminalWorkspace>,
     /// `Connect` 이벤트는 `&mut Window`가 필요해 다음 렌더로 미룬다.
     pending_connect: Option<i64>,
+    /// 터미널 페이지로 들어왔으니 포커스를 옮겨야 한다는 표시.
+    /// `&mut Window`가 필요해 렌더까지 미룬다(pending_connect와 같은 이유).
+    pending_terminal_focus: bool,
     modal: Option<ActiveModal>,
     toasts: Vec<Toast>,
     next_toast_id: u64,
@@ -181,6 +184,8 @@ impl Workspace {
             active: None,
             terminal,
             pending_connect: None,
+            // 시작 화면이 터미널이면 첫 렌더에서 바로 포커스를 잡는다.
+            pending_terminal_focus: matches!(page, Page::Terminal),
             modal: None,
             toasts: Vec::new(),
             next_toast_id: 0,
@@ -240,18 +245,32 @@ impl Workspace {
             ViewEvent::Navigate(page) => {
                 // 실제 뷰 생성은 `&mut Window`가 있는 렌더에서 한다.
                 self.page = page;
+                // 터미널로 들어오면 포커스도 함께 옮긴다 — 안 그러면 ⌘1 같은
+                // 탭 액션이 터미널 서브트리 밖에서 디스패치돼 무시된다
+                // (터미널을 한 번 클릭해야 동작하던 이유).
+                self.pending_terminal_focus = matches!(page, Page::Terminal);
                 cx.notify();
             }
             ViewEvent::Connect(server_id) => {
                 self.page = Page::Terminal;
                 self.pending_connect = Some(server_id);
+                self.pending_terminal_focus = true;
                 cx.notify();
             }
         }
     }
 
+    /// 화면 전환 (사이드바·테스트에서 호출).
+    pub fn set_page(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigate(page, window, cx);
+        cx.notify();
+    }
+
     fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         self.page = page;
+        if matches!(page, Page::Terminal) {
+            self.pending_terminal_focus = true;
+        }
         self.sidebar
             .update(cx, |sidebar, cx| sidebar.set_active(page, cx));
 
@@ -437,6 +456,12 @@ impl Render for Workspace {
             self.terminal.update(cx, |terminal, cx| {
                 terminal.open_server_tab(server_id, label, window, cx);
             });
+        }
+
+        if self.pending_terminal_focus && matches!(self.page, Page::Terminal) {
+            self.pending_terminal_focus = false;
+            self.terminal
+                .update(cx, |terminal, cx| terminal.focus_active_pane(window, cx));
         }
 
         let t = theme(cx).clone();

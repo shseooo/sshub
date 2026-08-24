@@ -245,3 +245,69 @@ fn pasting_from_inside_a_workspace_update_does_not_abort(cx: &mut TestAppContext
     });
     assert!(live, "붙여넣기 후 세션이 죽었다");
 }
+
+/// 다른 화면에 있다가 터미널로 들어오면 ⌘1/2/3이 **바로** 먹어야 한다.
+///
+/// gpui는 포커스된 요소의 디스패치 경로를 따라 액션을 보낸다. 터미널로 페이지만
+/// 바꾸고 포커스를 옮기지 않으면 탭 액션 핸들러(TerminalWorkspace)가 경로 밖이라
+/// 아무 일도 일어나지 않았다 — 터미널을 한 번 클릭해야 동작하던 증상.
+#[gpui::test]
+fn entering_the_terminal_page_makes_tab_shortcuts_work_without_clicking(cx: &mut TestAppContext) {
+    use sshub::views::Page;
+    use sshub::window_manager::WindowId;
+
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let paths = sshub_core::AppPaths::in_dir(dir.path().to_path_buf());
+    cx.update(|cx| {
+        sshub::state::init_with_paths(paths.clone(), cx);
+        sshub::theme::init(cx);
+        sshub::ui::init(cx);
+        sshub::keymap::register_all(cx, &sshub_core::settings::default_shortcuts());
+        sshub::session_registry::init(&paths, cx);
+        sshub::window_manager::init(cx);
+    });
+
+    let window = cx.add_window(|window, cx| {
+        sshub::workspace::Workspace::new(WindowId(1), None, window, cx)
+    });
+    let mut vcx = VisualTestContext::from_window(window.into(), cx);
+    vcx.run_until_parked();
+
+    // 탭 3개 만들고, 서버 목록 화면으로 나갔다가 터미널로 돌아온다.
+    window
+        .update(&mut vcx, |ws, window, cx| {
+            ws.terminal().update(cx, |t, cx| {
+                t.new_tab(window, cx);
+                t.new_tab(window, cx);
+            });
+        })
+        .unwrap();
+    vcx.run_until_parked();
+
+    window.update(&mut vcx, |ws, window, cx| ws.set_page(Page::Servers, window, cx)).unwrap();
+    vcx.run_until_parked();
+
+    // 실제로 다른 화면을 쓰면 포커스가 터미널 밖으로 나간다(검색창·사이드바 등).
+    // 그 상태를 만들어야 이 버그가 재현된다.
+    window
+        .update(&mut vcx, |_ws, window, cx| {
+            let elsewhere = cx.focus_handle();
+            window.focus(&elsewhere);
+        })
+        .unwrap();
+    vcx.run_until_parked();
+    window.update(&mut vcx, |ws, window, cx| ws.set_page(Page::Terminal, window, cx)).unwrap();
+    vcx.run_until_parked();
+
+    // 클릭 없이 바로 ⌘1
+    vcx.simulate_keystrokes("cmd-1");
+    vcx.run_until_parked();
+
+    let active_is_first = window
+        .update(&mut vcx, |ws, _, cx| {
+            ws.terminal().read(cx).tabs().first().map(|t| t.id.clone())
+                == ws.terminal().read(cx).active_tab_id().cloned()
+        })
+        .unwrap();
+    assert!(active_is_first, "터미널 진입 직후 ⌘1이 먹지 않았다");
+}
