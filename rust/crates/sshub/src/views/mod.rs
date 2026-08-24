@@ -3,7 +3,6 @@
 //! 각 뷰는 독립 엔티티이고, 화면 전환·접속 요청은 **자기가 처리하지 않고**
 //! `ViewEvent`로 올려보낸다 — 라우팅과 PTY 소유는 워크스페이스 몫이라
 //! 뷰가 재생성돼도 세션이 살아남아야 하기 때문(DESIGN-ui.md §3).
-pub mod dashboard;
 pub mod key_manager;
 pub mod server_edit;
 pub mod server_list;
@@ -18,7 +17,6 @@ use crate::state::app_state;
 /// 라우팅 대상. `ServerEdit { id: None }`은 신규 작성.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
-    Dashboard,
     Servers,
     ServerEdit { id: Option<i64> },
     Terminal,
@@ -27,15 +25,15 @@ pub enum Page {
 }
 
 impl Page {
-    /// `settings.start_page` 문자열 ↔ 페이지. 알 수 없는 값은 대시보드로
-    /// (구버전 설정 파일이 사라진 페이지 이름을 들고 있어도 앱은 떠야 한다).
+    /// `settings.start_page` 문자열 ↔ 페이지. 알 수 없는 값은 서버 목록으로
+    /// (구버전 설정 파일이 사라진 페이지 이름 — 예전 기본값 "dashboard" 등 —
+    /// 을 들고 있어도 앱은 떠야 한다).
     pub fn from_start_page(value: &str) -> Page {
         match value {
-            "servers" => Page::Servers,
             "terminal" => Page::Terminal,
             "keys" => Page::Keys,
             "settings" => Page::Settings,
-            _ => Page::Dashboard,
+            _ => Page::Servers,
         }
     }
 
@@ -45,7 +43,6 @@ impl Page {
             Page::Terminal => "terminal",
             Page::Keys => "keys",
             Page::Settings => "settings",
-            Page::Dashboard => "dashboard",
         }
     }
 }
@@ -85,15 +82,17 @@ mod tests {
 
     #[test]
     fn start_page_roundtrips() {
-        for page in [Page::Dashboard, Page::Servers, Page::Terminal, Page::Keys, Page::Settings] {
+        for page in [Page::Servers, Page::Terminal, Page::Keys, Page::Settings] {
             assert_eq!(Page::from_start_page(page.as_start_page()), page);
         }
     }
 
     #[test]
-    fn unknown_start_page_falls_back_to_dashboard() {
-        assert_eq!(Page::from_start_page("/nope"), Page::Dashboard);
-        assert_eq!(Page::from_start_page(""), Page::Dashboard);
+    fn unknown_start_page_falls_back_to_servers() {
+        assert_eq!(Page::from_start_page("/nope"), Page::Servers);
+        assert_eq!(Page::from_start_page(""), Page::Servers);
+        // 삭제된 대시보드를 가리키던 구버전 설정도 서버 목록으로 접힌다.
+        assert_eq!(Page::from_start_page("dashboard"), Page::Servers);
     }
 
     #[test]

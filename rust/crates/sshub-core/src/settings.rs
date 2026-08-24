@@ -64,10 +64,10 @@ pub struct TerminalAppearance {
 }
 
 fn default_start_page() -> String {
-    "dashboard".to_string()
+    "servers".to_string()
 }
 
-pub const START_PAGES: [&str; 5] = ["dashboard", "servers", "terminal", "keys", "settings"];
+pub const START_PAGES: [&str; 4] = ["servers", "terminal", "keys", "settings"];
 
 /// 기존 앱의 단축키 기본값을 gpui Keystroke 표기로 옮긴 것
 /// (meta→cmd, KeyT→t, Equal→=, ArrowLeft→left …).
@@ -147,6 +147,8 @@ impl Settings {
     /// 추가돼도 구버전 설정 파일이 그 단축키를 영원히 잃지 않도록.
     pub fn normalize(&mut self) {
         self.version = SETTINGS_VERSION;
+        // 사라진 페이지 이름("dashboard" 등 구버전 기본값)도 손상이 아니라
+        // 마이그레이션 대상이다 — 조용히 현재 기본값으로 접는다.
         if !START_PAGES.contains(&self.start_page.as_str()) {
             self.start_page = default_start_page();
         }
@@ -188,7 +190,7 @@ mod tests {
         std::fs::write(&path, br#"{"version":1,"sidebarCollapsed":true}"#).unwrap();
         let s = Settings::load(&path);
         assert!(s.sidebar_collapsed);
-        assert_eq!(s.start_page, "dashboard");
+        assert_eq!(s.start_page, "servers");
         assert_eq!(s.appearance.accent, "#74ade8");
         assert_eq!(s.shortcuts.len(), default_shortcuts().len());
     }
@@ -203,10 +205,18 @@ mod tests {
         s.appearance.translucency = 90;
         s.appearance.terminal.font_size = 99.0;
         s.normalize();
-        assert_eq!(s.start_page, "dashboard");
+        assert_eq!(s.start_page, "servers");
         assert_eq!(s.language, None);
         assert_eq!(s.appearance.translucency, 40);
         assert_eq!(s.appearance.terminal.font_size, 24.0);
+    }
+
+    #[test]
+    fn dashboard_start_page_migrates_to_servers() {
+        // 대시보드 삭제 전 기본값이라 실사용 설정 파일에 남아 있다.
+        let mut s = Settings { start_page: "dashboard".into(), ..Settings::default() };
+        s.normalize();
+        assert_eq!(s.start_page, "servers");
     }
 
     #[test]

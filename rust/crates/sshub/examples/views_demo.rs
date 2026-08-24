@@ -1,6 +1,6 @@
-//! 관리 화면 5종 쇼케이스. `cargo run -p sshub --example views_demo`
+//! 관리 화면 4종 쇼케이스. `cargo run -p sshub --example views_demo`
 //!
-//! 사이드바 + Dashboard/Servers/ServerEdit/Keys/Settings를 실제 `AppState`에
+//! 사이드바 + Servers/ServerEdit/Keys/Settings를 실제 `AppState`에
 //! 물려 띄운다. 워크스페이스가 아직 없으므로 여기서 라우팅(`ViewEvent`)을
 //! 최소한으로 흉내 낸다 — 레이아웃 눈으로 확인하는 용도.
 //!
@@ -13,15 +13,14 @@ use sshub::state;
 use sshub::theme::{self, theme};
 use sshub::ui;
 use sshub::views::{
-    dashboard::DashboardView, key_manager::KeyManagerView, server_edit::ServerEditView,
-    server_list::ServerListView, settings_page::SettingsView, sidebar::Sidebar, Page, ViewEvent,
+    key_manager::KeyManagerView, server_edit::ServerEditView, server_list::ServerListView,
+    settings_page::SettingsView, sidebar::Sidebar, Page, ViewEvent,
 };
 
 actions!(views_demo, [Quit]);
 
 /// 현재 페이지의 뷰 — 페이지를 옮길 때마다 새로 만든다(워크스페이스와 동일한 정책).
 enum ActiveView {
-    Dashboard(Entity<DashboardView>),
     Servers(Entity<ServerListView>),
     ServerEdit(Entity<ServerEditView>),
     Keys(Entity<KeyManagerView>),
@@ -37,19 +36,19 @@ struct Demo {
 
 impl Demo {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let page = Page::Dashboard;
+        let page = Page::Servers;
         let sidebar = cx.new(|cx| Sidebar::new(page, cx));
         let subscription = cx.subscribe(&sidebar, |this: &mut Demo, _, event: &ViewEvent, cx| {
             this.handle_event(*event, cx);
         });
-        let active = ActiveView::Dashboard(cx.new(DashboardView::new));
+        let active = ActiveView::Servers(cx.new(|cx| ServerListView::new(window, cx)));
         let mut demo = Self {
             sidebar,
             active,
             page,
             _subscriptions: vec![subscription],
         };
-        // 창이 뜨자마자 대시보드 구독까지 걸어 둔다.
+        // 창이 뜨자마자 첫 화면 구독까지 걸어 둔다.
         demo.navigate(page, window, cx);
         demo
     }
@@ -77,15 +76,8 @@ impl Demo {
         )];
 
         self.active = match page {
-            Page::Dashboard | Page::Terminal => {
-                let view = cx.new(DashboardView::new);
-                subscriptions.push(cx.subscribe(
-                    &view,
-                    |this: &mut Demo, _, event: &ViewEvent, cx| this.handle_event(*event, cx),
-                ));
-                ActiveView::Dashboard(view)
-            }
-            Page::Servers => {
+            // 데모에는 터미널 호스트가 없다 — 서버 목록으로 대신 보여 준다.
+            Page::Servers | Page::Terminal => {
                 let view = cx.new(|cx| ServerListView::new(window, cx));
                 subscriptions.push(cx.subscribe(
                     &view,
@@ -120,8 +112,7 @@ impl Render for Demo {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 내비 이벤트로 페이지가 바뀌었는데 뷰가 아직 그대로면 여기서 만든다.
         let stale = match (&self.active, self.page) {
-            (ActiveView::Dashboard(_), Page::Dashboard | Page::Terminal) => false,
-            (ActiveView::Servers(_), Page::Servers) => false,
+            (ActiveView::Servers(_), Page::Servers | Page::Terminal) => false,
             (ActiveView::ServerEdit(_), Page::ServerEdit { .. }) => false,
             (ActiveView::Keys(_), Page::Keys) => false,
             (ActiveView::Settings(_), Page::Settings) => false,
@@ -134,7 +125,6 @@ impl Render for Demo {
 
         let t = theme(cx).clone();
         let content = match &self.active {
-            ActiveView::Dashboard(view) => view.clone().into_any_element(),
             ActiveView::Servers(view) => view.clone().into_any_element(),
             ActiveView::ServerEdit(view) => view.clone().into_any_element(),
             ActiveView::Keys(view) => view.clone().into_any_element(),

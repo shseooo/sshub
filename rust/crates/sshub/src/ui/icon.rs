@@ -28,7 +28,6 @@ pub enum Icon {
     Key,
     Terminal,
     Settings,
-    Dashboard,
     Spinner,
 }
 
@@ -54,7 +53,6 @@ impl Icon {
             Icon::Key => "⚿",
             Icon::Terminal => "❯",
             Icon::Settings => "⚙",
-            Icon::Dashboard => "◫",
             Icon::Spinner => "◐",
         }
     }

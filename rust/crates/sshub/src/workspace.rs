@@ -26,8 +26,8 @@ use crate::theme::theme;
 use crate::ui::toast::render_toast_stack;
 use crate::ui::{ModalOverlay, Toast};
 use crate::views::{
-    current_lang, dashboard::DashboardView, key_manager::KeyManagerView,
-    server_edit::ServerEditView, server_list::ServerListView, settings_page::SettingsView,
+    current_lang, key_manager::KeyManagerView, server_edit::ServerEditView,
+    server_list::ServerListView, settings_page::SettingsView,
     sidebar::Sidebar, Page, ViewEvent,
 };
 use crate::window_manager::{self, WindowId};
@@ -50,7 +50,6 @@ pub struct ActiveModal {
 /// 현재 페이지의 뷰. `Page::Terminal`일 때는 `None` — 터미널은 별도 필드가
 /// 항상 들고 있으므로 여기 낄 필요가 없다.
 enum ActiveView {
-    Dashboard(Entity<DashboardView>),
     Servers(Entity<ServerListView>),
     ServerEdit(Entity<ServerEditView>),
     Keys(Entity<KeyManagerView>),
@@ -259,11 +258,6 @@ impl Workspace {
         self.active = match page {
             // 터미널은 상시 엔티티가 그린다 — 페이지 뷰가 없다.
             Page::Terminal => None,
-            Page::Dashboard => {
-                let view = cx.new(DashboardView::new);
-                self.watch(&view, cx);
-                Some(ActiveView::Dashboard(view))
-            }
             Page::Servers => {
                 let view = cx.new(|cx| ServerListView::new(window, cx));
                 self.watch(&view, cx);
@@ -300,8 +294,7 @@ impl Workspace {
     fn view_is_stale(&self) -> bool {
         !matches!(
             (&self.active, self.page),
-            (Some(ActiveView::Dashboard(_)), Page::Dashboard)
-                | (Some(ActiveView::Servers(_)), Page::Servers)
+            (Some(ActiveView::Servers(_)), Page::Servers)
                 | (Some(ActiveView::ServerEdit(_)), Page::ServerEdit { .. })
                 | (Some(ActiveView::Keys(_)), Page::Keys)
                 | (Some(ActiveView::Settings(_)), Page::Settings)
@@ -450,7 +443,6 @@ impl Render for Workspace {
 
         let content = match (&self.active, self.page) {
             (_, Page::Terminal) => self.terminal.clone().into_any_element(),
-            (Some(ActiveView::Dashboard(view)), _) => view.clone().into_any_element(),
             (Some(ActiveView::Servers(view)), _) => view.clone().into_any_element(),
             (Some(ActiveView::ServerEdit(view)), _) => view.clone().into_any_element(),
             (Some(ActiveView::Keys(view)), _) => view.clone().into_any_element(),

@@ -182,7 +182,7 @@ pub fn load_window_bounds / save_window_bounds;  // compact, best-effort
 ```jsonc
 { "version": 1,
   "language": "ko|en|ja",            // 부재 → 시스템 로케일 감지
-  "startPage": "dashboard|servers|terminal|keys|settings",
+  "startPage": "servers|terminal|keys|settings",
   "sidebarCollapsed": false,
   "appearance": { "accent": "#74ade8", "translucency": 0,
                   "terminal": { "fontSize": 14, "foreground": null, "background": null } },

@@ -1,4 +1,4 @@
-//! 사이드바 — 5개 내비 항목 + 접기 토글 (Electron `src/components/Sidebar.tsx`).
+//! 사이드바 — 4개 내비 항목 + 접기 토글 (Electron `src/components/Sidebar.tsx`).
 //!
 //! 접힘 상태는 `settings.sidebar_collapsed`로 영속화한다.
 use gpui::{div, prelude::*, px, Context, Entity, EventEmitter, IntoElement, Window};
@@ -14,8 +14,7 @@ pub const SIDEBAR_WIDTH_COLLAPSED: f32 = 56.;
 /// macOS 신호등이 앉는 자리 — 헤더를 그 아래로 밀어낸다.
 const TRAFFIC_LIGHT_INSET: f32 = 34.;
 
-const NAV_ITEMS: [(Page, Icon, TrKey); 5] = [
-    (Page::Dashboard, Icon::Dashboard, TrKey::NavDashboard),
+const NAV_ITEMS: [(Page, Icon, TrKey); 4] = [
     (Page::Servers, Icon::Server, TrKey::NavServers),
     (Page::Terminal, Icon::Terminal, TrKey::NavTerminal),
     (Page::Keys, Icon::Key, TrKey::NavKeys),
@@ -72,7 +71,6 @@ impl Sidebar {
         ) || self.active == page;
         let label = tr(lang, key);
         let element_id = gpui::SharedString::new_static(match page {
-            Page::Dashboard => "nav-dashboard",
             Page::Servers | Page::ServerEdit { .. } => "nav-servers",
             Page::Terminal => "nav-terminal",
             Page::Keys => "nav-keys",

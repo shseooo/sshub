@@ -26,7 +26,7 @@ crates/sshub/src/
   i18n/{mod.rs, generated.rs}      # generated는 scripts/gen_i18n.mjs 1회 실행 후 커밋
   ui/{mod,button,checkbox,text_input,text_area,select,modal,list,toast,form,icon}.rs
   assets.rs
-  views/{sidebar,dashboard,server_list,server_edit,key_manager,settings_page,terminal_host}.rs
+  views/{sidebar,server_list,server_edit,key_manager,settings_page,terminal_host}.rs
   (+ DESIGN-terminal.md의 terminal/session 파일들)
 ```
 
@@ -71,7 +71,7 @@ Application::new().run(|cx| {
 ```
 - 타이틀바: 36px 드래그 스트립; 사이드바 헤더 좌측 ~76px 패딩(신호등).
 - **반투명 유지**: Blurred + 루트 bg 알파, 런타임 토글. 카드/터미널은 불투명.
-- 라우팅: `enum Page { Dashboard, Servers, ServerEdit{id:Option<i64>}, Terminal, Keys, Settings }`.
+- 라우팅: `enum Page { Servers, ServerEdit{id:Option<i64>}, Terminal, Keys, Settings }`.
   gpui는 엔티티 수명 ≠ 렌더 — PTY는 terminal_host 엔티티(1회 생성, 드랍 금지) 소유,
   Terminal 페이지에서만 렌더해도 세션 유지. 페이지 뷰는 내비 시 재생성.
 - 사이드바: 208px ↔ 56px 접힘(설정 저장), 5 페이지 svg 아이콘 + i18n 라벨, 활성 accent wash.

@@ -168,11 +168,11 @@ impl SettingsView {
             .iter()
             .map(|page| {
                 let label = match *page {
-                    "servers" => TrKey::NavServers,
                     "terminal" => TrKey::NavTerminal,
                     "keys" => TrKey::NavKeys,
                     "settings" => TrKey::NavSettings,
-                    _ => TrKey::NavDashboard,
+                    // START_PAGES의 첫 항목이자 기본값 — 알 수 없는 값도 여기로.
+                    _ => TrKey::NavServers,
                 };
                 SelectOption::new(*page, tr(lang, label))
             })
