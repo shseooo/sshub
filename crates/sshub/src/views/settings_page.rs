@@ -1002,7 +1002,16 @@ impl Render for SettingsView {
                 .flex_row()
                 .gap(px(8.))
                 .text_size(px(11.))
-                .child(div().w(px(36.)).text_color(t.accent).child(label))
+                // 라벨 칸은 가장 긴 라벨("version")에 맞춘다. 좁으면 글자가
+                // 접혀 "versio / n"처럼 두 줄로 깨진다 — nowrap도 함께 건다.
+                .child(
+                    div()
+                        .w(px(56.))
+                        .flex_none()
+                        .whitespace_nowrap()
+                        .text_color(t.accent)
+                        .child(label),
+                )
                 .child(div().flex_1().text_color(t.text_muted).child(value))
         };
         let info_card = self
