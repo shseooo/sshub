@@ -73,6 +73,15 @@ impl HostBlock {
         })
     }
 
+    /// 앱이 소유할 수 있는 블록이면 그 별칭. 단일 패턴 + 와일드카드 없음이
+    /// 조건이다 — Phase 2에서 "이 블록이 서버 목록에 뜨는가"의 유일한 기준.
+    pub fn writable_alias(&self) -> Option<&str> {
+        match self.patterns.as_slice() {
+            [only] if is_writable_alias(only) => Some(only.as_str()),
+            _ => None,
+        }
+    }
+
     /// 여러 패턴이거나 와일드카드가 있으면 앱이 편집하지 않는다 —
     /// `Host a b c`의 한 패턴만 고치는 건 나머지 패턴의 의미까지 바꾼다.
     fn writable_as(&self, alias: &str) -> bool {
@@ -258,7 +267,7 @@ pub(crate) fn has_wildcard(pattern: &str) -> bool {
 /// 앱이 써도 되는 별칭인가. 와일드카드는 다른 호스트를 삼키고, 쉼표는
 /// 패턴 목록으로 쪼개지며, `"`는 ssh_config 따옴표 안에서 이스케이프할
 /// 방법이 없다 — 셋 다 쓰는 순간 다시 읽어들일 수 없는 줄이 된다.
-fn is_writable_alias(alias: &str) -> bool {
+pub(crate) fn is_writable_alias(alias: &str) -> bool {
     !alias.is_empty() && !has_wildcard(alias) && !alias.contains(',') && !alias.contains('"')
 }
 
@@ -538,6 +547,32 @@ impl Document {
                 self.nodes.push(Node::Host(block));
             }
         }
+    }
+
+    /// 이 별칭을 앱이 편집할 수 있는가 (쓰기 가능한 단일 패턴 블록이 이미
+    /// 있거나, 아무도 소유하지 않아 새로 만들 수 있다).
+    pub fn can_write(&self, alias: &str) -> bool {
+        if !is_writable_alias(alias) {
+            return false;
+        }
+        self.writable_index(alias).is_some() || self.host(alias).is_none()
+    }
+
+    /// 앱이 소유한 지시어 한 줄을 지운다. `upsert_host`의 "절대 지우지 않는다"
+    /// 규칙에 대한 **명시적 예외**다 — 사용자가 UI에서 ProxyJump를 비우거나
+    /// 포트를 기본값(22)으로 되돌린 경우, 그 줄이 남아 있으면 다음 load에서
+    /// 값이 되살아나 편집이 먹지 않는다. 그래서 호출자는 "사용자가 이 필드를
+    /// 직접 비웠다"를 아는 단일 서버 편집 경로뿐이고, 일괄 동기화는 쓰지 않는다.
+    pub fn remove_directive(&mut self, alias: &str, key: &str) -> bool {
+        let alias = sanitize_config_value(alias);
+        let key = key.to_ascii_lowercase();
+        let Some(i) = self.writable_index(&alias) else { return false };
+        let Node::Host(block) = &mut self.nodes[i] else { return false };
+        let before = block.entries.len();
+        block
+            .entries
+            .retain(|e| !matches!(e, Entry::Directive { key: k, .. } if *k == key));
+        before != block.entries.len()
     }
 
     /// `from` 블록의 별칭만 바꾼다 (단일 패턴 블록에서만).

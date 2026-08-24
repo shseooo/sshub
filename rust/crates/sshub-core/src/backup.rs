@@ -99,7 +99,11 @@ mod tests {
 
     fn make_ctx() -> Ctx {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = Store::new(dir.path().join("sshub.json"));
+        let mut store = Store::new(
+            dir.path().join("sshub.json"),
+            dir.path().join(".ssh").join("config"),
+            dir.path().join("ssh_keys"),
+        );
         store.load();
         let keys_dir = dir.path().join("ssh_keys");
         fs::create_dir_all(&keys_dir).unwrap();

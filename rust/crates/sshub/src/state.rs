@@ -67,7 +67,13 @@ pub fn app_state(cx: &App) -> Entity<AppState> {
 
 impl AppState {
     fn new(paths: AppPaths) -> Self {
-        let mut store = Store::new(paths.store_file.clone());
+        // 접속 정보의 원본은 ~/.ssh/config다 — 경로를 명시적으로 넘긴다
+        // (Store에는 기본 경로가 없어서 테스트가 실수로 진짜 파일을 못 연다).
+        let mut store = Store::new(
+            paths.store_file.clone(),
+            paths.ssh_config_file.clone(),
+            paths.keys_dir.clone(),
+        );
         store.load();
         let settings = Settings::load(&paths.settings_file);
 

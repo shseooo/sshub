@@ -16,6 +16,7 @@ pub mod ops;
 pub mod paths;
 pub mod scrollback;
 pub mod settings;
+pub mod sidecar;
 pub mod ssh_args;
 pub mod ssh_config;
 pub mod store;
@@ -32,6 +33,7 @@ pub use model::{
 pub use paths::AppPaths;
 pub use scrollback::{scrollback_file_name, ScrollbackStore, SCROLLBACK_LINES};
 pub use settings::Settings;
+pub use sidecar::{HostMeta, SidecarData};
 pub use ssh_args::{build_connect_banner, build_ssh_args, SshPaths};
 pub use store::Store;
 pub use terminal_cwd::TerminalCwdStore;

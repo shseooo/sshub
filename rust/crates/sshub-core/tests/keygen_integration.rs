@@ -25,7 +25,11 @@ fn setup() -> Env {
     let dir = tempfile::tempdir().unwrap();
     let keys_dir = dir.path().join("ssh_keys");
     std::fs::create_dir_all(&keys_dir).unwrap();
-    let store = Store::new(dir.path().join("sshub.json"));
+    let store = Store::new(
+        dir.path().join("sshub.json"),
+        dir.path().join(".ssh").join("config"),
+        dir.path().join("ssh_keys"),
+    );
     Env { _dir: dir, store, keys_dir }
 }
 

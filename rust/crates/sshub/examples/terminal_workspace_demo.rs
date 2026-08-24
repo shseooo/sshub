@@ -33,10 +33,18 @@ impl Render for DemoRoot {
     }
 }
 
+/// 데모는 사용자의 실제 데이터를 건드리지 않는다 — 특히 Phase 2 이후로는
+/// 서버를 하나 만들기만 해도 진짜 `~/.ssh/config`가 수정되기 때문이다.
+fn init_sandboxed_state(cx: &mut gpui::App) -> gpui::Entity<state::AppState> {
+    let dir = std::env::temp_dir().join("sshub-demo");
+    let _ = std::fs::create_dir_all(&dir);
+    state::init_with_paths(sshub_core::AppPaths::in_dir(dir), cx)
+}
+
 fn main() {
     Application::new().run(|cx: &mut App| {
         theme::init(cx);
-        let app_state = state::init(cx);
+        let app_state = init_sandboxed_state(cx);
         // 위젯 바인딩 → 앱 단축키 순서를 지켜야 리바인드 후에도 둘 다 산다.
         ui::init(cx);
         let shortcuts = app_state.read(cx).settings.shortcuts.clone();

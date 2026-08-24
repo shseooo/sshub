@@ -19,6 +19,15 @@ pub enum CoreError {
     #[error("Server not found")]
     ServerNotFound,
 
+    /// 별칭(Host)은 config에서 유일해야 한다 — 같은 이름 두 개는 ssh가
+    /// 먼저 나온 쪽만 쓰므로 조용한 오작동이 된다.
+    #[error("같은 이름의 호스트가 이미 있습니다: {0}")]
+    ServerAliasTaken(String),
+
+    /// config를 읽지 못한 상태에서 쓰면 빈 문서로 덮어써 버린다 — 차단한다.
+    #[error("~/.ssh/config를 읽을 수 없어 저장을 중단했습니다. 파일 권한을 확인하세요. ({0})")]
+    ConfigUnreadable(String),
+
     #[error("SSH key not found")]
     KeyNotFound,
 

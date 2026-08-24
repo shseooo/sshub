@@ -17,7 +17,7 @@ use crate::ssh_config::document::{has_wildcard, Document, Entry};
 
 /// JS `parseInt(value, 10)`: 선행 부호 + 십진 숫자 접두부만 읽는다
 /// ("2200x" → 2200, "nope" → None).
-fn js_parse_int(s: &str) -> Option<i64> {
+pub(crate) fn js_parse_int(s: &str) -> Option<i64> {
     let t = s.trim_start();
     let (sign, digits) = match t.strip_prefix('-') {
         Some(rest) => (-1i64, rest),
