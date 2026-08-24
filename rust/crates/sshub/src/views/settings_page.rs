@@ -61,6 +61,43 @@ fn is_modifier_only(key: &str) -> bool {
     matches!(key, "cmd" | "ctrl" | "alt" | "shift" | "fn" | "function" | "super" | "win")
 }
 
+/// 터미널 폰트 목록을 만든다. 첫 항목은 값이 빈 문자열 = "기본(내장 폰트)".
+///
+/// gpui 0.2.2의 `all_font_names()`는 패밀리 이름만 주고 고정폭 여부 같은
+/// 메타데이터는 노출하지 않는다. 그래서 진짜 monospace 판별은 포기하고,
+/// 터미널에 쓸 일이 없는 것이 확실한 두 부류만 걷어낸다 — `.`로 시작하는
+/// 시스템 내부 폰트(`.SFNS`·`.AppleSystemUIFont`)와 이모지 폰트.
+///
+/// 내장 폰트는 등록되어 있어 목록에도 잡히므로, 같은 이름이 두 번 보이지
+/// 않도록 뒤쪽 목록에서는 뺀다 (맨 앞 "기본" 항목이 그 역할을 한다).
+fn font_family_options(raw: Vec<String>) -> Vec<SelectOption> {
+    let mut families: Vec<String> = raw
+        .into_iter()
+        .filter(|name| {
+            let name = name.trim();
+            !name.is_empty()
+                && !name.starts_with('.')
+                && !name.contains("Emoji")
+                && name != crate::fonts::EMBEDDED_FAMILY
+        })
+        .collect();
+    families.sort_unstable();
+    families.dedup();
+
+    let mut options = Vec::with_capacity(families.len() + 1);
+    options.push(SelectOption::new("", crate::fonts::EMBEDDED_FAMILY));
+    options.extend(families.into_iter().map(|f| SelectOption::new(f.clone(), f)));
+    options
+}
+
+/// Select 값 → 설정값. 빈 값은 "기본"이라 `None`으로 저장한다 —
+/// 그래야 `resolve_family`가 내장 폰트를 고르고, 구버전 `sshub.json`과도
+/// 같은 의미를 유지한다.
+fn font_family_setting(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
 /// 설정값을 전역 테마에 반영한다 — 어센트·반투명·터미널 색을 즉시 적용.
 fn apply_theme(settings: &Settings, cx: &mut App) {
     let accent = parse_hex_color(&settings.appearance.accent).unwrap_or(0x74ade8);
@@ -99,6 +136,7 @@ pub struct SettingsView {
     state: Entity<AppState>,
     start_page: Entity<Select>,
     language: Entity<Select>,
+    term_font: Entity<Select>,
     accent_input: Entity<TextInput>,
     passphrase: Entity<TextInput>,
     /// 카드 하단 인라인 메시지 (원본과 동일하게 단일 슬롯).
@@ -166,6 +204,23 @@ impl SettingsView {
             Select::new("language", language_options, cx).with_selected_ix(Some(language_ix))
         });
 
+        // 설정에 남아 있지만 지금 시스템에 없는 패밀리도 목록에 넣는다 —
+        // 그래야 현재 값이 "—"로 비어 보이지 않는다.
+        let current_family = settings
+            .appearance
+            .terminal
+            .font_family
+            .clone()
+            .unwrap_or_default();
+        let mut raw_families = cx.text_system().all_font_names();
+        if !current_family.trim().is_empty() {
+            raw_families.push(current_family.clone());
+        }
+        let term_font = cx.new(|cx| {
+            Select::new("term-font", font_family_options(raw_families), cx)
+                .with_selected_value(&current_family)
+        });
+
         let accent_input = cx.new(|cx| {
             TextInput::new(window, cx)
                 .with_text(settings.appearance.accent.clone())
@@ -206,6 +261,17 @@ impl SettingsView {
             },
         ));
         subscriptions.push(cx.subscribe(
+            &term_font,
+            |this: &mut Self, select, event: &SelectEvent, cx| {
+                let SelectEvent::Changed(ix) = event;
+                let Some(value) = select.read(cx).options().get(*ix).map(|o| o.value.to_string())
+                else {
+                    return;
+                };
+                this.set_term_font_family(&value, cx);
+            },
+        ));
+        subscriptions.push(cx.subscribe(
             &accent_input,
             |this: &mut Self, input, event: &InputEvent, cx| {
                 if !matches!(event, InputEvent::Changed) {
@@ -223,6 +289,7 @@ impl SettingsView {
             state,
             start_page,
             language,
+            term_font,
             accent_input,
             passphrase,
             message: None,
@@ -242,6 +309,21 @@ impl SettingsView {
     fn set_accent(&mut self, accent: String, cx: &mut Context<Self>) {
         self.state.update(cx, |state, cx| {
             state.update_settings(|s| s.appearance.accent = accent.clone(), cx);
+        });
+        let settings = self.state.read(cx).settings.clone();
+        apply_theme(&settings, cx);
+        cx.notify();
+    }
+
+    /// 터미널 폰트 패밀리 변경 — 폰트 크기 스테퍼와 **같은 경로**를 탄다
+    /// (설정 저장 → `apply_theme`로 전역 테마 재구성 → notify).
+    fn set_term_font_family(&mut self, value: &str, cx: &mut Context<Self>) {
+        let family = font_family_setting(value);
+        self.state.update(cx, |state, cx| {
+            state.update_settings(
+                |s| s.appearance.terminal.font_family = family.clone(),
+                cx,
+            );
         });
         let settings = self.state.read(cx).settings.clone();
         apply_theme(&settings, cx);
@@ -849,6 +931,23 @@ impl Render for SettingsView {
                     .children(swatches)
                     .child(div().w(px(96.)).child(self.accent_input.clone())),
             )
+            .child(
+                // 섹션 제목과 같이 이 파일의 하드코딩 영문 라벨 관습을 따른다
+                // (i18n 키를 새로 만들 수 없어 3개 언어 동기화가 불가능).
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(12.))
+                            .text_color(t.text)
+                            .child("Terminal font"),
+                    )
+                    .child(div().w(px(176.)).child(self.term_font.clone())),
+            )
             .child(self.labeled_row(
                 tr(lang, TrKey::SettingsTermFontSize),
                 tr(lang, TrKey::SettingsTermColors),
@@ -1300,6 +1399,39 @@ mod tests {
                 assert_ne!(a, b, "단축키 라벨이 중복되면 어떤 행인지 알 수 없다");
             }
         }
+    }
+
+    #[test]
+    fn font_options_put_the_embedded_family_first_and_scrub_the_rest() {
+        let options = font_family_options(vec![
+            "Monaco".into(),
+            ".SFNS".into(),
+            "Menlo".into(),
+            "Apple Color Emoji".into(),
+            "Menlo".into(),
+            ".AppleSystemUIFont".into(),
+            crate::fonts::EMBEDDED_FAMILY.into(),
+            "  ".into(),
+        ]);
+        let pairs: Vec<(&str, &str)> = options
+            .iter()
+            .map(|o| (o.value.as_ref(), o.label.as_ref()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("", crate::fonts::EMBEDDED_FAMILY),
+                ("Menlo", "Menlo"),
+                ("Monaco", "Monaco"),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_font_value_means_use_the_embedded_default() {
+        assert_eq!(font_family_setting(""), None);
+        assert_eq!(font_family_setting("   "), None);
+        assert_eq!(font_family_setting("Menlo"), Some("Menlo".to_string()));
     }
 
     #[test]

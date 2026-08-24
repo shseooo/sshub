@@ -37,7 +37,7 @@ use crate::split_view::{
 };
 use crate::state::{app_state, AppState, StateEvent};
 use crate::tab_bar::{drop_boundary, render_tab_bar, TabBarCtx, TabBarHandlers};
-use crate::terminal_view::{BroadcastInput, BroadcastSink, TerminalView, DEFAULT_FONT_FAMILY};
+use crate::terminal_view::{BroadcastInput, BroadcastSink, TerminalView};
 use crate::theme::{theme, Theme};
 use crate::ui::{ConfirmDialog, ModalOverlay, TextInput};
 
@@ -950,7 +950,6 @@ impl TerminalWorkspace {
         let view = cx.new(|cx| {
             let mut view = TerminalView::from_terminal(terminal, cx);
             view.set_local(local);
-            view.set_font_family(DEFAULT_FONT_FAMILY);
             view.set_broadcast(Some(sink));
             view
         });

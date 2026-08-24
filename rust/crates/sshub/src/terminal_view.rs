@@ -89,7 +89,8 @@ impl TerminalView {
             terminal,
             focus_handle,
             ime: None,
-            font_family: DEFAULT_FONT_FAMILY.to_string(),
+            // 빈 값 = 테마(설정)를 따른다. `set_font_family`로 pane별 고정도 가능.
+            font_family: String::new(),
             last_bounds: None,
             local: true,
             broadcast: None,
@@ -276,13 +277,17 @@ impl Render for TerminalView {
         let focused = self.focus_handle.is_focused(window);
         let terminal_theme = theme(cx).terminal.clone();
         let bg = Hsla::from(terminal_theme.background);
+        // 폰트 패밀리는 **테마에서** 읽는다. pane 생성 시점의 값을 들고 있으면
+        // 설정에서 폰트를 바꿔도 이미 열린 터미널은 그대로라 재시작이 필요해진다
+        // (크기·색은 이미 테마 경로를 타므로 패밀리만 예외로 둘 이유가 없다).
+        let font_family = effective_font_family(&self.font_family, &terminal_theme.font_family);
         let element = TerminalElement::new(
             self.terminal.clone(),
             cx.entity(),
             self.focus_handle.clone(),
             focused,
             terminal_theme,
-            self.font_family.clone(),
+            font_family,
         );
         div()
             .track_focus(&self.focus_handle)
@@ -402,6 +407,19 @@ impl EntityInputHandler for TerminalView {
     }
 }
 
+/// pane이 실제로 쓸 폰트 패밀리.
+///
+/// pane별 고정값이 있으면 그것을, 없으면 테마(=설정)를 따른다. 생성 시점 값을
+/// 들고 있으면 설정에서 폰트를 바꿔도 이미 열린 터미널은 안 바뀐다 — 크기·색은
+/// 테마 경로를 타는데 패밀리만 예외였던 것이 실제 버그였다.
+pub fn effective_font_family(pane_override: &str, theme_family: &str) -> String {
+    if pane_override.trim().is_empty() {
+        theme_family.to_string()
+    } else {
+        pane_override.to_string()
+    }
+}
+
 /// IME가 처리해야 할 "평범한 문자 입력"인가.
 ///
 /// 수식키가 붙은 키는 터미널이 제어 시퀀스로 직접 매핑해야 하고(ctrl-c 등),
@@ -439,6 +457,15 @@ mod tests {
         let mut k = ks(source);
         k.key_char = Some(ch.to_string());
         k
+    }
+
+    #[test]
+    fn font_family_follows_the_theme_unless_a_pane_pins_one() {
+        // 설정에서 폰트를 바꾸면 이미 열린 pane도 따라와야 한다.
+        assert_eq!(effective_font_family("", "D2Coding"), "D2Coding");
+        assert_eq!(effective_font_family("   ", "Menlo"), "Menlo");
+        // pane별 고정값은 존중한다.
+        assert_eq!(effective_font_family("SF Mono", "D2Coding"), "SF Mono");
     }
 
     #[test]
