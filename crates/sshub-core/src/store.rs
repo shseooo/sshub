@@ -1018,7 +1018,7 @@ mod tests {
         assert_ne!(alpha_id, zulu_id);
 
         // 앱을 껐다 켠다 — 두 id 모두 그대로여야 한다.
-        let mut fresh = ctx.open();
+        let fresh = ctx.open();
         let after = fresh.list_servers();
         let get = |n: &str| after.iter().find(|x| x.name == n).unwrap().id;
         assert_eq!(get("zulu"), zulu_id, "기존 호스트의 id가 밀렸다");
