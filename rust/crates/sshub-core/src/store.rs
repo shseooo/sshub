@@ -19,6 +19,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::error::CoreError;
 use crate::fsutil::{atomic_write_0600, path_with_suffix};
@@ -63,11 +64,23 @@ pub fn normalize_data(raw: Option<StoreData>) -> StoreData {
 /// config 블록에서 조인에 필요한 값만 뽑아둔 스냅숏 (문서 빌림을 끊기 위해).
 struct ConfigHost {
     alias: String,
+    /// 이 별칭을 소유한 블록을 앱이 편집할 수 없다 (다중 패턴 블록의 패턴).
+    read_only: bool,
     host_name: Option<String>,
     port: Option<String>,
     user: Option<String>,
     proxy_jump: Option<String>,
     identity_file: Option<String>,
+}
+
+/// 파일의 "지문" — 외부 편집 감지에만 쓴다. mtime+길이 조합은 사람이 손으로
+/// 고치는 시나리오(에디터 저장)에서 실질적으로 항상 달라진다. 해시를 쓰지
+/// 않는 이유는 창 활성화마다 파일 전체를 읽고 싶지 않아서다.
+type FileStamp = Option<(SystemTime, u64)>;
+
+fn file_stamp(path: &Path) -> FileStamp {
+    let meta = fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
 }
 
 pub struct Store {
@@ -79,6 +92,9 @@ pub struct Store {
     /// config를 읽지 못했다(권한 등). 이 상태에서 쓰기를 허용하면 빈 문서로
     /// 사용자의 config를 덮어써 버린다 — 그래서 모든 쓰기를 막는다.
     config_error: Option<String>,
+    /// 마지막으로 읽어들인 두 파일의 지문 — `reload_if_changed`의 기준점.
+    config_stamp: FileStamp,
+    sidecar_stamp: FileStamp,
     /// 조인된 런타임 뷰. `servers`는 config ⨝ 사이드카, `keys`는 사이드카 그대로.
     data: StoreData,
 }
@@ -95,6 +111,8 @@ impl Store {
             sidecar: SidecarData::default(),
             doc: Document::parse(""),
             config_error: None,
+            config_stamp: None,
+            sidecar_stamp: None,
             data: normalize_data(None),
         }
     }
@@ -145,6 +163,75 @@ impl Store {
             // load는 실패하지 않는 계약 — 재저장은 best-effort.
             let _ = self.save_sidecar();
         }
+        self.remember_stamps();
+    }
+
+    /// 지금 디스크에 있는 두 파일의 지문을 기준점으로 삼는다. 앱이 스스로
+    /// 쓴 직후에도 호출해야 자기 쓰기를 "외부 편집"으로 오인하지 않는다.
+    fn remember_stamps(&mut self) {
+        self.config_stamp = file_stamp(&self.ssh_config_path);
+        self.sidecar_stamp = file_stamp(&self.path);
+    }
+
+    /// 앱 밖에서 `~/.ssh/config`(또는 사이드카)가 바뀌었으면 다시 읽는다.
+    /// **어느 파일도 쓰지 않는다** — 사용자가 편집기로 저장한 직후에 앱이
+    /// 되받아쓰기를 하면 그게 곧 손실이다.
+    ///
+    /// 돌려주는 값은 "조인 결과가 실제로 달라졌는가". 저장만 하고 내용은
+    /// 그대로인 경우(mtime만 변경)에 UI를 흔들지 않기 위해서다.
+    pub fn reload_if_changed(&mut self) -> bool {
+        let config_stamp = file_stamp(&self.ssh_config_path);
+        let sidecar_stamp = file_stamp(&self.path);
+        if config_stamp == self.config_stamp && sidecar_stamp == self.sidecar_stamp {
+            return false;
+        }
+        // 사이드카가 v1이거나 손상됐으면 마이그레이션/복구가 필요한데 그건
+        // 파일을 쓰는 일이다 — 여기서는 하지 않고 현재 상태를 유지한 채
+        // 다음 `load()`에 맡긴다.
+        let sidecar = match self.peek_sidecar() {
+            Some(s) => s,
+            None => return false,
+        };
+
+        let mut config_error = None;
+        let text = match fs::read_to_string(&self.ssh_config_path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                config_error = Some(e.to_string());
+                String::new()
+            }
+        };
+
+        let before = self.data.clone();
+        self.doc = Document::parse(&text);
+        self.config_error = config_error;
+        self.sidecar = sidecar;
+        // 새 별칭에 배정한 id는 **즉시** 저장한다. id는 저장된 터미널 레이아웃의
+        // `serverId`와 `pem_server_<id>` 파일명이 참조하므로, 메모리에만 두면
+        // 그 사이 config 앞쪽에 호스트가 추가됐을 때 다음 실행에서 번호가 밀려
+        // 복원된 탭이 엉뚱한 서버에 붙을 수 있다.
+        // (사용자의 ~/.ssh/config는 여기서 절대 쓰지 않는다 — 사이드카만이다.)
+        if self.rebuild() {
+            let _ = self.save_sidecar();
+        }
+        self.config_stamp = config_stamp;
+        self.sidecar_stamp = file_stamp(&self.path);
+        self.data != before
+    }
+
+    /// 부수효과 없는 사이드카 읽기. v2가 아니거나 파싱 불가면 `None`
+    /// (`read_sidecar`와 달리 `.corrupt.*` 백업을 만들지 않는다).
+    fn peek_sidecar(&self) -> Option<SidecarData> {
+        if !self.path.exists() {
+            return Some(SidecarData::default());
+        }
+        let text = fs::read_to_string(&self.path).ok()?;
+        let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+        if value.get("version").and_then(|v| v.as_i64()) != Some(SIDECAR_VERSION) {
+            return None;
+        }
+        serde_json::from_value::<SidecarData>(value).ok().map(SidecarData::normalize)
     }
 
     /// `(사이드카, v1 원본, 재저장 필요 여부)`.
@@ -195,21 +282,35 @@ impl Store {
     /// config + 사이드카 → `data`. 사이드카에 없던 별칭에 id를 새로 배정했으면
     /// `true` (호출자가 사이드카를 저장해야 한다).
     fn rebuild(&mut self) -> bool {
-        let hosts: Vec<ConfigHost> = self
-            .doc
-            .hosts()
-            .into_iter()
-            .filter_map(|b| {
-                Some(ConfigHost {
-                    alias: b.writable_alias()?.to_string(),
+        let mut hosts: Vec<ConfigHost> = Vec::new();
+        for b in self.doc.hosts() {
+            // `Host a b c`는 패턴 하나하나가 접속 가능한 별칭이다 — 하나만
+            // 고르면 나머지는 앱에서 영영 보이지 않는다. 반대로 와일드카드
+            // 패턴(`Host *`, `*.dev`)은 호스트가 아니라 기본값 블록이므로
+            // 목록에 넣지 않는다.
+            let writable = b.writable_alias().map(str::to_string);
+            let read_only = writable.is_none();
+            let aliases: Vec<String> = match writable {
+                Some(alias) => vec![alias],
+                None => b
+                    .patterns
+                    .iter()
+                    .filter(|p| is_writable_alias(p))
+                    .cloned()
+                    .collect(),
+            };
+            for alias in aliases {
+                hosts.push(ConfigHost {
+                    alias,
+                    read_only,
                     host_name: b.get("hostname").map(str::to_string),
                     port: b.get("port").map(str::to_string),
                     user: b.get("user").map(str::to_string),
                     proxy_jump: b.get("proxyjump").map(str::to_string),
                     identity_file: b.get("identityfile").map(str::to_string),
-                })
-            })
-            .collect();
+                });
+            }
+        }
 
         let mut changed = false;
         let mut seen: HashSet<String> = HashSet::new();
@@ -259,6 +360,7 @@ impl Store {
                 last_connected_at: meta.last_connected_at.clone(),
                 created_at: meta.created_at.clone(),
                 updated_at: meta.updated_at.clone(),
+                read_only: h.read_only,
             });
         }
 
@@ -273,9 +375,10 @@ impl Store {
 
     // ==================== 영속화 ====================
 
-    fn save_sidecar(&self) -> Result<(), CoreError> {
+    fn save_sidecar(&mut self) -> Result<(), CoreError> {
         let json = serde_json::to_string_pretty(&self.sidecar)?;
         atomic_write_0600(&self.path, json.as_bytes())?;
+        self.sidecar_stamp = file_stamp(&self.path);
         Ok(())
     }
 
@@ -284,6 +387,7 @@ impl Store {
     fn persist(&mut self) -> Result<(), CoreError> {
         self.ensure_config_writable()?;
         write_document(&self.ssh_config_path, &self.doc)?;
+        self.config_stamp = file_stamp(&self.ssh_config_path);
         self.rebuild();
         self.save_sidecar()
     }
@@ -377,6 +481,7 @@ impl Store {
             last_connected_at: None,
             created_at: Some(now.clone()),
             updated_at: Some(now),
+            read_only: false,
         };
         self.write_host(&alias, &server, false);
         self.persist()?;
@@ -386,6 +491,12 @@ impl Store {
     pub fn update_server(&mut self, dto: &UpdateServerDto) -> Result<Server, CoreError> {
         self.ensure_config_writable()?;
         let prev = self.find_server(dto.id).ok_or(CoreError::ServerNotFound)?;
+        // 읽기 전용 블록(`Host a b c` 등)은 앱의 소유가 아니다. 여기서 막지
+        // 않으면 config는 그대로인 채 사이드카에만 값이 들어가 "저장했는데
+        // 아무것도 안 바뀌는" 조용한 실패가 된다.
+        if prev.read_only {
+            return Err(CoreError::ServerNotFound);
+        }
         let old_alias = prev.name.clone();
         // 병합 3규칙(`??` / `Option<Option<T>>` / authoritative proxy_jump)은
         // 그대로 재사용한다 — 규칙을 두 벌 두면 반드시 갈라진다.
@@ -412,6 +523,11 @@ impl Store {
         self.ensure_config_writable()?;
         // 없는 id는 조용히 성공 (기존 동작 유지).
         let Some(server) = self.find_server(id) else { return Ok(()) };
+        // 읽기 전용 블록은 지우지 않는다 — 패턴 하나를 지우려면 나머지
+        // 패턴의 의미까지 바꿔야 한다.
+        if server.read_only {
+            return Err(CoreError::ServerNotFound);
+        }
         self.doc.remove_host(&server.name);
         self.sidecar.hosts.remove(&server.name);
         self.persist()
@@ -436,6 +552,26 @@ impl Store {
             self.persist_meta_only()?;
         }
         Ok(())
+    }
+
+    /// 키 파일 이름이 바뀌었을 때 config의 `IdentityFile`을 따라 옮긴다.
+    ///
+    /// 별칭 접속으로 바뀐 뒤(`ssh <alias>`)로는 `-i`라는 안전망이 없다 —
+    /// 블록에 남은 옛 경로가 곧 접속 실패다. 값만 갈아끼우므로 사용자가 쓴
+    /// 다른 줄은 그대로다. 실제로 바뀐 줄이 있으면 `true`.
+    pub fn rename_identity_file(&mut self, from: &Path, to: &Path) -> Result<bool, CoreError> {
+        if from == to {
+            return Ok(false);
+        }
+        let from = from.to_string_lossy().into_owned();
+        let to = to.to_string_lossy().into_owned();
+        self.ensure_config_writable()?;
+        // 바꿀 줄이 없으면 파일을 열지 않는다 (쓸데없는 백업이 쌓이지 않게).
+        if self.doc.rewrite_identity_file(&from, &to) == 0 {
+            return Ok(false);
+        }
+        self.persist()?;
+        Ok(true)
     }
 
     // ==================== SSH Keys ====================
@@ -703,7 +839,190 @@ mod tests {
         let mut s = ctx.open();
         assert!(matches!(s.insert_server(&dto("a")), Err(CoreError::ServerNotFound)));
         assert!(matches!(s.insert_server(&dto("*")), Err(CoreError::ServerNotFound)));
-        assert!(s.list_servers().is_empty());
+        // 목록에는 구체 패턴 둘만 (읽기 전용), 와일드카드는 호스트가 아니다.
+        let names: Vec<String> = s.list_servers().into_iter().map(|x| x.name).collect();
+        assert_eq!(names, ["a", "b"]);
+    }
+
+    // ==================== Phase 3 ====================
+
+    #[test]
+    fn lists_every_concrete_pattern_of_a_multi_pattern_block_as_read_only() {
+        let ctx = Ctx::new();
+        ctx.write_config(concat!(
+            "Host a b c\n",
+            "  HostName shared.example.com\n",
+            "  User deploy\n",
+            "  Port 2222\n",
+            "\n",
+            "Host solo\n",
+            "  HostName solo.example.com\n",
+            "\n",
+            "Host *.dev\n",
+            "  User any\n",
+            "\n",
+            "Host *\n",
+            "  ForwardAgent yes\n",
+        ));
+        let s = ctx.open();
+        let listed: Vec<(String, bool)> =
+            s.list_servers().into_iter().map(|x| (x.name, x.read_only)).collect();
+        assert_eq!(
+            listed,
+            [
+                ("a".to_string(), true),
+                ("b".to_string(), true),
+                ("c".to_string(), true),
+                ("solo".to_string(), false),
+            ]
+        );
+        // 각 패턴은 같은 블록의 접속 정보를 공유한다.
+        let a = s.list_servers().into_iter().find(|x| x.name == "a").unwrap();
+        assert_eq!(a.host, "shared.example.com");
+        assert_eq!(a.port, 2222);
+        assert_eq!(a.username, "deploy");
+    }
+
+    #[test]
+    fn a_pattern_without_hostname_connects_to_its_own_name() {
+        let ctx = Ctx::new();
+        ctx.write_config("Host a b\n  User multi\n");
+        let s = ctx.open();
+        let hosts: Vec<String> = s.list_servers().into_iter().map(|x| x.host).collect();
+        assert_eq!(hosts, ["a", "b"]);
+    }
+
+    #[test]
+    fn read_only_pattern_ids_are_sidecar_assigned_and_stable_across_loads() {
+        let ctx = Ctx::new();
+        ctx.write_config("Host a b\n  User multi\n");
+        let first: Vec<i64> = ctx.open().list_servers().into_iter().map(|x| x.id).collect();
+        assert_eq!(first.len(), 2);
+        assert_ne!(first[0], first[1]);
+        let second: Vec<i64> = ctx.open().list_servers().into_iter().map(|x| x.id).collect();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn update_and_delete_refuse_a_read_only_host_without_touching_the_config() {
+        let ctx = Ctx::new();
+        let original = "Host a b\n  User multi\n";
+        ctx.write_config(original);
+        let mut s = ctx.open();
+        let a = s.list_servers().into_iter().find(|x| x.name == "a").unwrap();
+
+        let err = s
+            .update_server(&UpdateServerDto { id: a.id, host: Some("evil".into()), ..Default::default() })
+            .unwrap_err();
+        assert!(matches!(err, CoreError::ServerNotFound), "{err}");
+        assert!(matches!(s.delete_server(a.id), Err(CoreError::ServerNotFound)));
+        assert_eq!(ctx.config(), original);
+    }
+
+    #[test]
+    fn favorite_works_for_a_read_only_host_because_it_is_sidecar_only() {
+        // 즐겨찾기는 config에 표현할 수 없는 순수 메타데이터다 — 별칭(=패턴)을
+        // 키로 사이드카에만 기록되므로 읽기 전용 블록에도 안전하게 붙는다.
+        let ctx = Ctx::new();
+        let original = "Host a b\n  User multi\n";
+        ctx.write_config(original);
+        let mut s = ctx.open();
+        let b = s.list_servers().into_iter().find(|x| x.name == "b").unwrap();
+        assert!(s.toggle_favorite(b.id).unwrap().is_favorite);
+        assert_eq!(ctx.config(), original, "config는 한 바이트도 바뀌지 않는다");
+        assert!(ctx.open().find_server(b.id).unwrap().is_favorite);
+    }
+
+    #[test]
+    fn reload_if_changed_is_false_when_nothing_moved() {
+        let ctx = Ctx::new();
+        ctx.write_config("Host web\n  HostName 1.1.1.1\n");
+        let mut s = ctx.open();
+        assert!(!s.reload_if_changed());
+        assert!(!s.reload_if_changed());
+    }
+
+    #[test]
+    fn reload_if_changed_picks_up_a_hand_edited_config_without_rewriting_it() {
+        let ctx = Ctx::new();
+        ctx.write_config("Host web\n  HostName 1.1.1.1\n");
+        let mut s = ctx.open();
+        assert_eq!(s.list_servers().len(), 1);
+
+
+        // 사용자가 편집기로 저장한 상황. mtime 해상도가 낮아도 감지되도록
+        // 길이도 함께 달라지는 편집을 쓴다.
+        let edited = "Host web\n  HostName 1.1.1.1\n\nHost added-by-hand\n  HostName 2.2.2.2\n";
+        ctx.write_config(edited);
+
+        assert!(s.reload_if_changed());
+        let names: Vec<String> = s.list_servers().into_iter().map(|x| x.name).collect();
+        assert_eq!(names, ["added-by-hand", "web"]);
+        // 사용자의 config는 절대 되받아쓰지 않는다.
+        assert_eq!(ctx.config(), edited);
+        // 사이드카는 앱 소유 파일이라 새 별칭의 id를 저장한다 (아래 테스트가 이유).
+        let sidecar = fs::read_to_string(ctx.store_path()).unwrap();
+        assert!(sidecar.contains("added-by-hand"), "새 별칭의 id가 저장돼야 한다");
+        // 같은 상태를 두 번 보고하지 않는다.
+        assert!(!s.reload_if_changed());
+    }
+
+    #[test]
+    fn ids_assigned_during_reload_survive_a_relaunch() {
+        // id는 저장된 터미널 레이아웃의 `serverId`와 `pem_server_<id>` 파일명이
+        // 참조한다. reload에서 배정한 id를 저장하지 않으면, 그 사이 config
+        // **앞쪽에** 호스트가 늘었을 때 다음 실행에서 번호가 밀려 복원된 탭이
+        // 엉뚱한 서버에 붙는다.
+        let ctx = Ctx::new();
+        ctx.write_config("Host zulu\n  HostName 1.1.1.1\n");
+        let mut s = ctx.open();
+        let zulu_id = s.list_servers()[0].id;
+
+        // 사용자가 zulu 앞에 호스트를 하나 추가하고 앱이 그것을 감지한다.
+        ctx.write_config("Host alpha\n  HostName 2.2.2.2\n\nHost zulu\n  HostName 1.1.1.1\n");
+        assert!(s.reload_if_changed());
+        let alpha_id = s.list_servers().iter().find(|x| x.name == "alpha").unwrap().id;
+        assert_ne!(alpha_id, zulu_id);
+
+        // 앱을 껐다 켠다 — 두 id 모두 그대로여야 한다.
+        let mut fresh = ctx.open();
+        let after = fresh.list_servers();
+        let get = |n: &str| after.iter().find(|x| x.name == n).unwrap().id;
+        assert_eq!(get("zulu"), zulu_id, "기존 호스트의 id가 밀렸다");
+        assert_eq!(get("alpha"), alpha_id, "reload에서 배정한 id가 유실됐다");
+    }
+
+    #[test]
+    fn reload_if_changed_reports_false_when_only_the_mtime_moved() {
+        let ctx = Ctx::new();
+        let text = "Host web\n  HostName 1.1.1.1\n";
+        ctx.write_config(text);
+        let mut s = ctx.open();
+        // 같은 내용으로 다시 저장 = 조인 결과에 변화 없음.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ctx.write_config(text);
+        assert!(!s.reload_if_changed());
+    }
+
+    #[test]
+    fn reload_if_changed_sees_a_deleted_block() {
+        let ctx = Ctx::new();
+        ctx.write_config("Host web\n  HostName 1.1.1.1\n\nHost db\n  HostName 2.2.2.2\n");
+        let mut s = ctx.open();
+        assert_eq!(s.list_servers().len(), 2);
+        ctx.write_config("Host web\n  HostName 1.1.1.1\n");
+        assert!(s.reload_if_changed());
+        assert_eq!(s.list_servers().len(), 1);
+    }
+
+    #[test]
+    fn the_apps_own_writes_do_not_look_like_an_external_edit() {
+        let ctx = Ctx::new();
+        let mut s = ctx.open();
+        s.insert_server(&dto("web")).unwrap();
+        assert!(!s.reload_if_changed(), "직접 쓴 파일을 외부 편집으로 오인하면 안 된다");
+        s.toggle_favorite(1).unwrap();
+        assert!(!s.reload_if_changed());
     }
 
     #[test]

@@ -1,20 +1,21 @@
-//! ssh 명령 인자 구성 (ssh.ts 직역). 순수: 이미 존재가 확인된 키/PEM 경로를
-//! 받아 인자만 만든다. 인증 옵션은 프로젝트 규칙 그대로:
+//! ssh 명령 인자 구성.
+//!
+//! Phase 3부터 접속 대상은 **별칭 하나**다: `ssh [정책 -o …] <alias>`.
+//! HostName/Port/User/IdentityFile/ProxyJump는 전부 `~/.ssh/config`의 Host
+//! 블록이 갖고 있고 그게 원본이므로, 같은 값을 커맨드라인에 한 번 더 실어
+//! 보내면 두 곳이 어긋나는 순간 조용히 잘못된 곳으로 붙는다.
+//!
+//! 그래도 `-o`로 남기는 것들이 있다:
+//! - 앱 정책(`StrictHostKeyChecking`·`ConnectTimeout`·`ServerAlive*`) — 사용자의
+//!   파일에 일부러 쓰지 않는다. 앱이 띄운 세션에만 적용되어야 하는 값이다.
+//! - 인증 방식 힌트 — config는 "비밀번호로 붙는다"를 표현할 방법이 없다.
 //!   password → keyboard-interactive,password + PubkeyAuthentication=no
-//!   key/pem  → -i <path> + IdentitiesOnly=yes (경로가 있을 때만)
 //!   agent    → PreferredAuthentications=publickey
+//!   key/pem  → 추가 없음 (블록의 `IdentityFile`이 알아서 한다)
 
 use crate::model::{AuthType, Server};
 
-#[derive(Debug, Clone, Default)]
-pub struct SshPaths {
-    /// `key` 인증용으로 해석된 개인 키 경로 (없으면 None).
-    pub key_path: Option<String>,
-    /// `pem` 인증용으로 해석된 PEM 경로 (없으면 None).
-    pub pem_path: Option<String>,
-}
-
-pub fn build_ssh_args(server: &Server, paths: &SshPaths) -> Vec<String> {
+pub fn build_ssh_args(server: &Server) -> Vec<String> {
     let mut args: Vec<String> = [
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "ConnectTimeout=15",
@@ -25,11 +26,6 @@ pub fn build_ssh_args(server: &Server, paths: &SshPaths) -> Vec<String> {
     .map(|s| s.to_string())
     .collect();
 
-    if server.port != 22 {
-        args.push("-p".into());
-        args.push(server.port.to_string());
-    }
-
     match server.auth_type {
         AuthType::Password => {
             // 곧장 비밀번호 프롬프트로 — 안 그러면 ssh가 agent/기본 키를 뿌리다
@@ -39,37 +35,18 @@ pub fn build_ssh_args(server: &Server, paths: &SshPaths) -> Vec<String> {
             args.push("-o".into());
             args.push("PubkeyAuthentication=no".into());
         }
-        AuthType::Pem => {
-            if let Some(p) = &paths.pem_path {
-                args.push("-i".into());
-                args.push(p.clone());
-                args.push("-o".into());
-                args.push("IdentitiesOnly=yes".into());
-            }
-        }
         AuthType::Agent => {
             args.push("-o".into());
             args.push("PreferredAuthentications=publickey".into());
         }
-        AuthType::Key => {
-            // 선택한 키만 사용 (agent 키 난사 방지).
-            if let Some(p) = &paths.key_path {
-                args.push("-i".into());
-                args.push(p.clone());
-                args.push("-o".into());
-                args.push("IdentitiesOnly=yes".into());
-            }
-        }
+        // config 블록의 `IdentityFile`이 키를 지정한다 — `-i`로 덮어쓰면
+        // 사용자가 손으로 고친 키 경로를 앱이 이긴다.
+        AuthType::Key | AuthType::Pem => {}
     }
 
-    if let Some(pj) = server.proxy_jump.as_deref().map(str::trim) {
-        if !pj.is_empty() {
-            args.push("-J".into());
-            args.push(pj.to_string());
-        }
-    }
-
-    args.push(format!("{}@{}", server.username, server.host));
+    // `Server::name`이 곧 Host 별칭이다 (Phase 2 이후 목록의 모든 서버가
+    // config 블록에서 온다). 여러 패턴 블록의 개별 패턴도 그대로 별칭이다.
+    args.push(server.name.clone());
     args
 }
 
@@ -91,7 +68,7 @@ mod tests {
     fn srv() -> Server {
         Server {
             id: 1,
-            name: "s".into(),
+            name: "prod-web".into(),
             host: "example.com".into(),
             port: 22,
             username: "root".into(),
@@ -100,104 +77,87 @@ mod tests {
         }
     }
 
-    const BASE: [&str; 8] = [
+    const POLICY: [&str; 8] = [
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "ConnectTimeout=15",
         "-o", "ServerAliveInterval=15",
         "-o", "ServerAliveCountMax=3",
     ];
 
-    fn contains(args: &[String], s: &str) -> bool {
-        args.iter().any(|a| a == s)
-    }
-
-    fn index_of(args: &[String], s: &str) -> usize {
-        args.iter().position(|a| a == s).unwrap()
-    }
-
-    #[test]
-    fn starts_with_the_standard_o_options_and_ends_with_user_at_host() {
-        let a = build_ssh_args(&srv(), &SshPaths::default());
-        assert_eq!(a[..BASE.len()], BASE.map(String::from));
-        assert_eq!(a.last().unwrap(), "root@example.com");
+    /// 정책 인자 + 인증 인자 + 별칭. 벡터 전체를 통째로 고정한다 — 예전처럼
+    /// `contains`로만 보면 `-i`/`-p`/`-J`가 슬그머니 되살아나도 통과한다.
+    fn expect(auth_args: &[&str], alias: &str) -> Vec<String> {
+        POLICY
+            .iter()
+            .chain(auth_args.iter())
+            .chain(std::iter::once(&alias))
+            .map(|s| s.to_string())
+            .collect()
     }
 
     #[test]
-    fn adds_p_only_for_non_default_ports() {
-        assert!(!contains(&build_ssh_args(&srv(), &SshPaths::default()), "-p"));
-        let mut s = srv();
-        s.port = 2222;
-        let a = build_ssh_args(&s, &SshPaths::default());
-        assert!(contains(&a, "-p"));
-        assert_eq!(a[index_of(&a, "-p") + 1], "2222");
+    fn key_auth_is_policy_flags_plus_the_alias() {
+        assert_eq!(build_ssh_args(&srv()), expect(&[], "prod-web"));
     }
 
     #[test]
-    fn password_auth_uses_keyboard_interactive_and_disables_pubkey_no_i() {
-        let mut s = srv();
-        s.auth_type = AuthType::Password;
-        let a = build_ssh_args(&s, &SshPaths::default());
-        assert!(contains(&a, "PreferredAuthentications=keyboard-interactive,password"));
-        assert!(contains(&a, "PubkeyAuthentication=no"));
-        assert!(!contains(&a, "-i"));
-    }
-
-    #[test]
-    fn key_auth_with_a_resolved_key_path_adds_i_and_identities_only() {
-        let mut s = srv();
-        s.key_id = Some(3);
-        let paths = SshPaths { key_path: Some("/keys/id_mykey".into()), pem_path: None };
-        let a = build_ssh_args(&s, &paths);
-        assert!(contains(&a, "-i"));
-        assert_eq!(a[index_of(&a, "-i") + 1], "/keys/id_mykey");
-        assert!(contains(&a, "IdentitiesOnly=yes"));
-    }
-
-    #[test]
-    fn key_auth_with_no_resolved_path_adds_no_i() {
-        let mut s = srv();
-        s.key_id = Some(3);
-        assert!(!contains(&build_ssh_args(&s, &SshPaths::default()), "-i"));
-    }
-
-    #[test]
-    fn pem_auth_with_a_resolved_pem_path_adds_i_and_identities_only() {
+    fn pem_auth_is_policy_flags_plus_the_alias() {
         let mut s = srv();
         s.auth_type = AuthType::Pem;
-        let paths = SshPaths { key_path: None, pem_path: Some("/keys/pem_server_1".into()) };
-        let a = build_ssh_args(&s, &paths);
-        assert_eq!(a[index_of(&a, "-i") + 1], "/keys/pem_server_1");
-        assert!(contains(&a, "IdentitiesOnly=yes"));
+        assert_eq!(build_ssh_args(&s), expect(&[], "prod-web"));
     }
 
     #[test]
-    fn agent_auth_prefers_publickey_no_i() {
+    fn password_auth_adds_keyboard_interactive_and_disables_pubkey() {
+        let mut s = srv();
+        s.auth_type = AuthType::Password;
+        assert_eq!(
+            build_ssh_args(&s),
+            expect(
+                &[
+                    "-o",
+                    "PreferredAuthentications=keyboard-interactive,password",
+                    "-o",
+                    "PubkeyAuthentication=no",
+                ],
+                "prod-web",
+            )
+        );
+    }
+
+    #[test]
+    fn agent_auth_prefers_publickey() {
         let mut s = srv();
         s.auth_type = AuthType::Agent;
-        let a = build_ssh_args(&s, &SshPaths::default());
-        assert!(contains(&a, "PreferredAuthentications=publickey"));
-        assert!(!contains(&a, "-i"));
+        assert_eq!(
+            build_ssh_args(&s),
+            expect(&["-o", "PreferredAuthentications=publickey"], "prod-web")
+        );
     }
 
     #[test]
-    fn proxy_jump_adds_j_trimmed_and_ignores_blank() {
+    fn connection_fields_never_reach_the_command_line() {
+        // 전부 config 블록이 갖는 값이다 — 하나라도 여기로 새면 두 원본이 된다.
         let mut s = srv();
-        s.proxy_jump = Some("  user@bastion  ".into());
-        let a = build_ssh_args(&s, &SshPaths::default());
-        assert!(contains(&a, "-J"));
-        assert_eq!(a[index_of(&a, "-J") + 1], "user@bastion");
-
-        let mut blank = srv();
-        blank.proxy_jump = Some("   ".into());
-        assert!(!contains(&build_ssh_args(&blank, &SshPaths::default()), "-J"));
+        s.port = 2222;
+        s.proxy_jump = Some("user@bastion".into());
+        s.username = "deploy".into();
+        s.host = "10.0.0.1".into();
+        let a = build_ssh_args(&s);
+        for flag in ["-p", "-i", "-J", "IdentitiesOnly=yes"] {
+            assert!(!a.iter().any(|x| x == flag), "{flag} 가 남아 있다: {a:?}");
+        }
+        assert!(!a.iter().any(|x| x.contains('@')), "user@host 가 남아 있다: {a:?}");
+        assert_eq!(a.last().unwrap(), "prod-web");
     }
 
     #[test]
-    fn orders_j_before_the_destination() {
+    fn read_only_hosts_connect_through_their_pattern() {
+        // `Host a b c`의 패턴 하나하나가 그대로 접속 대상이 된다.
         let mut s = srv();
-        s.proxy_jump = Some("b".into());
-        let a = build_ssh_args(&s, &SshPaths::default());
-        assert!(index_of(&a, "-J") < index_of(&a, "root@example.com"));
+        s.name = "b".into();
+        s.read_only = true;
+        assert_eq!(build_ssh_args(&s).last().unwrap(), "b");
     }
 
     #[test]

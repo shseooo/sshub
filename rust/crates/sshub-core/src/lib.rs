@@ -34,7 +34,7 @@ pub use paths::AppPaths;
 pub use scrollback::{scrollback_file_name, ScrollbackStore, SCROLLBACK_LINES};
 pub use settings::Settings;
 pub use sidecar::{HostMeta, SidecarData};
-pub use ssh_args::{build_connect_banner, build_ssh_args, SshPaths};
+pub use ssh_args::{build_connect_banner, build_ssh_args};
 pub use store::Store;
 pub use terminal_cwd::TerminalCwdStore;
 pub use window_state::WindowBounds;

@@ -63,6 +63,11 @@ pub struct Server {
     pub last_connected_at: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+    /// 이 서버를 소유한 config 블록을 앱이 편집할 수 없다(`Host a b c` / 와일드카드).
+    /// 접속만 되고 편집·삭제는 거절된다. 런타임 전용 — `sshub.json`과 export
+    /// 번들의 바이트를 바꾸지 않도록 직렬화에서 제외한다(`SshKeyView`와 같은 이유).
+    #[serde(skip)]
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

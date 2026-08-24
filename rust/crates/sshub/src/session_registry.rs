@@ -46,7 +46,6 @@ pub struct SessionRegistry {
     cwds: TerminalCwdStore,
     servers: Vec<Server>,
     keys: Vec<SshKeyView>,
-    keys_dir: PathBuf,
     home: PathBuf,
     shell: String,
 }
@@ -84,7 +83,6 @@ impl SessionRegistry {
             cwds,
             servers: Vec::new(),
             keys: Vec::new(),
-            keys_dir: paths.keys_dir.clone(),
             home: home_dir(),
             shell: login_shell(),
         }
@@ -316,13 +314,9 @@ impl SessionRegistry {
             .iter()
             .find(|s| s.id == server_id)
             .ok_or_else(|| anyhow!("서버 {server_id}를 찾을 수 없습니다"))?;
-        let key_name = server.key_id.and_then(|key_id| {
-            self.keys
-                .iter()
-                .find(|k| k.key.id == key_id)
-                .map(|k| k.key.name.clone())
-        });
-        let plan = plan_ssh(server, &self.keys_dir, key_name.as_deref(), self.home.clone());
+        // 키 경로를 여기서 풀지 않는다 — `ssh <alias>`가 config 블록의
+        // `IdentityFile`을 그대로 쓴다 (Phase 3).
+        let plan = plan_ssh(server, self.home.clone());
         Ok((plan, false))
     }
 }

@@ -162,7 +162,8 @@ fn migration_keeps_every_v1_server_reachable_with_its_original_id() {
     assert_eq!(by_id(3).name, "production-web");
     assert_eq!(by_id(5).name, "db");
     assert_eq!(by_id(11).name, "legacy");
-    assert_eq!(store.list_servers().len(), 3);
+    // v1 서버 3 + `Host bastion jump`의 읽기 전용 패턴 2 (Phase 3).
+    assert_eq!(store.list_servers().len(), 5);
 }
 
 #[test]
@@ -232,7 +233,7 @@ fn migration_is_idempotent_a_second_load_changes_nothing() {
     let store = ctx.open();
     assert_eq!(ctx.config(), config_once, "두 번째 load가 config를 바꿨다");
     assert_eq!(ctx.sidecar(), sidecar_once, "두 번째 load가 사이드카를 바꿨다");
-    assert_eq!(store.list_servers().len(), 3);
+    assert_eq!(store.list_servers().len(), 5);
     // 마이그레이션은 한 번만 — v1 백업이 늘어나지 않는다.
     assert_eq!(ctx.files_matching("sshub.json.v1.").len(), 1);
 }
@@ -241,8 +242,12 @@ fn migration_is_idempotent_a_second_load_changes_nothing() {
 fn migration_sets_the_id_counter_past_every_v1_id() {
     let ctx = migrated();
     let mut store = ctx.open();
+    // v1의 nextServerId는 12. 그 다음 두 개(12·13)는 `Host bastion jump`의
+    // 읽기 전용 패턴이 load 시점에 가져가므로 새 서버는 14다.
+    assert_eq!(store.find_server(12).unwrap().name, "bastion");
+    assert_eq!(store.find_server(13).unwrap().name, "jump");
     let fresh = store.insert_server(&dto("fresh")).unwrap();
-    assert_eq!(fresh.id, 12, "v1의 nextServerId(12)를 이어받아야 한다");
+    assert_eq!(fresh.id, 14, "v1의 nextServerId(12) 뒤로 이어져야 한다");
 }
 
 // ==================== B. 손으로 쓴 호스트가 그대로 뜬다 ====================
@@ -446,7 +451,7 @@ fn the_sidecar_auth_wins_over_derivation_because_config_cannot_express_it() {
 // ==================== F. 읽기 전용 블록 ====================
 
 #[test]
-fn read_only_blocks_are_not_listed_and_cannot_be_edited_or_deleted() {
+fn wildcard_blocks_stay_unlisted_while_concrete_patterns_become_read_only_entries() {
     let ctx = Ctx::new();
     let original = "\
 Host a b c
@@ -461,20 +466,33 @@ Host *
     ctx.write_config(original);
     let mut store = ctx.open();
 
-    // 하나도 목록에 뜨지 않는다.
-    assert!(store.list_servers().is_empty());
+    // 구체 패턴은 접속 가능한 읽기 전용 항목이 되고, 와일드카드는 기본값
+    // 블록이라 목록에 넣지 않는다.
+    let listed: Vec<(String, bool)> =
+        store.list_servers().into_iter().map(|s| (s.name, s.read_only)).collect();
+    assert_eq!(
+        listed,
+        [
+            ("a".to_string(), true),
+            ("b".to_string(), true),
+            ("c".to_string(), true),
+        ]
+    );
 
     // 그 별칭으로 새 서버를 만들 수도 없다 (읽기 전용 블록이 이미 소유).
     for taken in ["a", "b", "c", "*", "*.dev"] {
         let err = store.insert_server(&dto(taken)).unwrap_err();
         assert!(matches!(err, CoreError::ServerNotFound), "{taken}: {err}");
     }
-    // id가 없으니 수정/삭제 대상도 아니다.
+    // 수정/삭제는 not-found 계열 에러로 거절된다 (패닉도, 조용한 성공도 아니다).
+    let a = store.list_servers().into_iter().next().unwrap();
     assert!(matches!(
-        store.update_server(&UpdateServerDto { id: 1, ..Default::default() }),
+        store.update_server(&UpdateServerDto { id: a.id, ..Default::default() }),
         Err(CoreError::ServerNotFound)
     ));
-    store.delete_server(1).unwrap(); // 없는 id는 조용히 성공 (기존 동작)
+    assert!(matches!(store.delete_server(a.id), Err(CoreError::ServerNotFound)));
+    // 없는 id는 여전히 조용히 성공 (기존 동작).
+    store.delete_server(9999).unwrap();
 
     assert_eq!(ctx.config(), original, "읽기 전용 블록이 건드려졌다");
 }

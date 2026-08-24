@@ -165,6 +165,10 @@ pub fn update_ssh_key(
         if pub_path(&old_priv).exists() {
             fs::rename(pub_path(&old_priv), pub_path(&new_priv))?;
         }
+        // 접속이 `ssh <alias>`로 바뀐 뒤로 config의 `IdentityFile`이 키를
+        // 지정하는 유일한 경로다 — 옛 파일을 가리키는 블록을 전부 따라 옮기지
+        // 않으면 그 호스트들이 그대로 접속 불가가 된다.
+        store.rename_identity_file(&old_priv, &new_priv)?;
     }
 
     let mut passphrase_protected = old.passphrase_protected;
@@ -374,6 +378,65 @@ mod tests {
         assert!(key_path_for(&c.keys_dir, "new").exists());
         assert!(pub_path(&key_path_for(&c.keys_dir, "new")).exists());
         assert_eq!(c.store.find_key(k.id).unwrap().name, "new");
+    }
+
+    #[test]
+    fn update_rename_moves_the_identity_file_of_every_host_that_used_the_key() {
+        // 별칭 접속(`ssh <alias>`)에는 `-i` 안전망이 없다 — config의
+        // `IdentityFile`이 옛 경로로 남으면 그 호스트들은 접속 불가가 된다.
+        let mut c = make_ctx();
+        let config_path = c.root.join(".ssh").join("config");
+        let key = import_ssh_key(
+            &mut c.store,
+            &c.keys_dir,
+            &import_dto("old name", "ssh-ed25519 AAAA", Some("PEM")),
+        )
+        .unwrap();
+        let old_path = key_path_for(&c.keys_dir, "old name");
+        let new_path = key_path_for(&c.keys_dir, "new name");
+
+        let original = format!(
+            concat!(
+                "# 손으로 관리하는 파일\n",
+                "Host alpha\n",
+                "  HostName 1.1.1.1\n",
+                "  IdentityFile {old}\n",
+                "  ControlMaster auto\n",
+                "\n",
+                "Host beta\n",
+                "  HostName 2.2.2.2\n",
+                "  IdentityFile {old}\n",
+                "\n",
+                "Host gamma\n",
+                "  IdentityFile ~/.ssh/id_rsa\n",
+            ),
+            old = old_path.display()
+        );
+        fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        fs::write(&config_path, &original).unwrap();
+        c.store.load();
+
+        update_ssh_key(
+            &mut c.store,
+            &c.keys_dir,
+            &UpdateKeyDto {
+                id: key.id,
+                name: "new name".into(),
+                public_key: "ssh-ed25519 AAAA".into(),
+                key_type: KeyType::Ed25519,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let out = fs::read_to_string(&config_path).unwrap();
+        // 두 블록 모두 새 경로로 옮겨졌고, 그 밖의 바이트는 전부 그대로다.
+        assert_eq!(
+            out,
+            original.replace(&old_path.display().to_string(), &new_path.display().to_string())
+        );
+        assert_eq!(out.matches(&new_path.display().to_string()).count(), 2);
+        assert!(new_path.exists() && !old_path.exists());
     }
 
     #[test]

@@ -10,10 +10,6 @@ mod parse;
 
 pub use backups::backups_to_prune;
 pub use document::{Document, Entry, HostBlock, HostSpec, MatchBlock, Node};
-pub use file::{
-    sync_config_to_servers, sync_config_to_servers_in, sync_servers_to_config,
-    sync_servers_to_config_in,
-};
 pub use file::{write_document, ConfigWrite};
 pub use parse::parse_ssh_config;
 

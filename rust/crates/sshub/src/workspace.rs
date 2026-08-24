@@ -158,6 +158,12 @@ impl Workspace {
             cx.observe_window_bounds(window, |this, window, cx| {
                 this.sync_bounds(window, cx);
             }),
+            // 사용자는 `~/.ssh/config`를 에디터에서 고친 뒤 앱으로 돌아온다.
+            // gpui 0.2.2 `Context::observe_window_activation`(app/context.rs:447)이
+            // 활성/비활성 전환마다 불러 주므로 그 순간 디스크를 다시 본다.
+            cx.observe_window_activation(window, |this, _window, cx| {
+                this.refresh_from_disk(cx);
+            }),
             // 창이 닫히면(=이 뷰가 드랍되면) 레코드를 지우고 고아 세션을 정리한다.
             // DESIGN-terminal.md §8 "창 닫기 = 그 창의 탭 닫기".
             cx.on_release(|this: &mut Self, cx| {
@@ -260,6 +266,20 @@ impl Workspace {
         }
     }
 
+    /// 외부 편집 반영. 값비싼 일이 아니다 — 파일 두 개의 mtime/길이만 보고,
+    /// 달라졌을 때만 다시 읽는다.
+    ///
+    /// 서버 편집 화면이 떠 있으면 건너뛴다: 재조회가 `ServersChanged`를 쏘면
+    /// 작성 중이던 폼이 디스크 값으로 되돌아가 입력이 사라진다.
+    fn refresh_from_disk(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.page, Page::ServerEdit { .. }) {
+            return;
+        }
+        app_state(cx).update(cx, |state, cx| {
+            state.refresh_from_disk(cx);
+        });
+    }
+
     /// 화면 전환 (사이드바·테스트에서 호출).
     pub fn set_page(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         self.navigate(page, window, cx);
@@ -268,6 +288,10 @@ impl Workspace {
 
     fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         self.page = page;
+        // 목록으로 들어오는 길목 — 창을 떠나지 않고 config를 고쳤을 수도 있다.
+        if matches!(page, Page::Servers) {
+            self.refresh_from_disk(cx);
+        }
         if matches!(page, Page::Terminal) {
             self.pending_terminal_focus = true;
         }

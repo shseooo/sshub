@@ -1,26 +1,24 @@
-//! ~/.ssh/config 파일 I/O + 스토어 동기화.
-//! 순수 파싱/문서 모델은 형제 모듈에 있고 여기는 읽기/병합/쓰기/백업만 다룬다.
-//! `_in` 변형은 디렉터리를 주입받아 테스트 가능하게 한 것 — 공개 함수는
-//! `~/.ssh`를 쓴다.
+//! ~/.ssh/config 파일 쓰기 + 백업.
+//! 순수 파싱/문서 모델은 형제 모듈에 있고 여기는 쓰기/백업/경로 헬퍼만 다룬다.
+//!
+//! Phase 3에서 "서버 → config"·"config → 서버" 일괄 동기화 두 함수를 걷어냈다.
+//! config가 곧 스토어가 된 이상 동기화할 상대가 없다 — 정상 상태에서 완전한
+//! no-op이면서 실패했을 때만 사용자의 손글씨에 값을 역주입할 수 있는,
+//! 위험만 남은 코드였다. 외부 편집은 `Store::reload_if_changed`가 받는다.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::error::CoreError;
 use crate::fsutil::{atomic_write_0600, rm_force};
 use crate::key_files::{key_file_name, server_pem_file_name};
 use crate::model::{AuthType, Server, SshKey};
 use crate::ssh_config::document::{Document, HostSpec};
-use crate::ssh_config::{backups_to_prune, parse_ssh_config};
-use crate::store::Store;
+use crate::ssh_config::backups_to_prune;
 use crate::time::now_stamp;
 
 const MAX_CONFIG_BACKUPS: usize = 10;
-
-fn home_ssh_dir() -> Result<PathBuf, CoreError> {
-    Ok(dirs::home_dir().ok_or(CoreError::NoHomeDir)?.join(".ssh"))
-}
 
 /// 최신 MAX_CONFIG_BACKUPS개의 `config.bak.*`만 남긴다 (best-effort).
 fn prune_backups(dir: &Path) {
@@ -130,81 +128,13 @@ pub fn write_document(path: &Path, doc: &Document) -> Result<ConfigWrite, CoreEr
     Ok(ConfigWrite::Written)
 }
 
-/// 저장된 서버들을 `<dir>/config`에 **병합**한다 (덮어쓰지 않는다).
-/// 앱이 소유한 다섯 지시어만 갱신되고 나머지 지시어·주석·`Include`·`Match`는
-/// 바이트 그대로 남는다.
-pub fn sync_servers_to_config_in(
-    dir: &Path,
-    keys_dir: &Path,
-    store: &Store,
-) -> Result<(), CoreError> {
-    let servers = store.list_servers();
-    // 서버가 없으면 할 일이 없다. (예전에는 파일을 통째로 덮어썼기 때문에
-    // "빈 목록으로 config를 날리는" 사고를 막는 에러가 필요했지만, 이제는
-    // 어떤 경우에도 기존 내용을 지우지 않으므로 조용한 no-op이면 충분하다.)
-    if servers.is_empty() {
-        return Ok(());
-    }
-    fs::create_dir_all(dir)?;
-    let path = dir.join("config");
-    let existing = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e.into()),
-    };
-
-    // Phase 2 이후 `Server::name`이 곧 `Host` 별칭이다 (그룹 접두사는 v1
-    // 마이그레이션에서만 쓴다 — 다시 붙이면 `prod-prod-web` 유령이 생긴다).
-    //
-    // 그리고 config가 원본이 된 지금, 이미 블록이 있는 별칭은 **건드리지
-    // 않는다**. 목록의 서버는 모두 config에서 온 것이므로 이 동기화는 정상
-    // 상태에서 완전한 no-op이고, 남은 쓸모는 "앱 밖에서 지워진 블록 되살리기"
-    // 하나뿐이다. (건드렸다간 유추로 채운 `User user` 같은 값이 사용자의
-    // 손글씨 블록에 역주입된다.)
-    let keys = store.list_keys_raw().to_vec();
-    let mut doc = Document::parse(&existing);
-    for server in &servers {
-        if doc.host(&server.name).is_some() {
-            continue;
-        }
-        doc.upsert_host(&server.name, &host_spec(server, keys_dir, &keys));
-    }
-    write_document(&path, &doc)?;
-    Ok(())
-}
-
-pub fn sync_servers_to_config(store: &Store, keys_dir: &Path) -> Result<(), CoreError> {
-    sync_servers_to_config_in(&home_ssh_dir()?, keys_dir, store)
-}
-
-/// `<dir>/config`의 호스트를 import; 이미 있는 이름은 스킵.
-pub fn sync_config_to_servers_in(dir: &Path, store: &mut Store) -> Result<Vec<Server>, CoreError> {
-    let path = dir.join("config");
-    if !path.exists() {
-        return Ok(vec![]);
-    }
-    let entries = parse_ssh_config(&fs::read_to_string(&path)?);
-    let existing: std::collections::HashSet<String> =
-        store.list_servers().into_iter().map(|s| s.name).collect();
-    let mut imported = Vec::new();
-    for entry in entries {
-        if existing.contains(&entry.name) {
-            continue;
-        }
-        imported.push(store.insert_server(&entry)?);
-    }
-    Ok(imported)
-}
-
-pub fn sync_config_to_servers(store: &mut Store) -> Result<Vec<Server>, CoreError> {
-    sync_config_to_servers_in(&home_ssh_dir()?, store)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{CreateServerDto, KeyType, UpdateServerDto};
     use crate::ops::key_ops::NewKey;
+    use crate::store::Store;
+    use std::path::PathBuf;
 
     struct Ctx {
         dir: tempfile::TempDir,
@@ -254,44 +184,6 @@ mod tests {
 
     fn mode_of(path: &Path) -> u32 {
         fs::metadata(path).unwrap().permissions().mode() & 0o777
-    }
-
-    #[test]
-    fn does_nothing_when_no_servers_are_registered() {
-        let ctx = Ctx::new();
-        fs::create_dir_all(ctx.ssh()).unwrap();
-        let store = ctx.store();
-
-        sync_servers_to_config_in(&ctx.ssh(), &ctx.keys(), &store).unwrap();
-        assert!(!ctx.config_path().exists());
-    }
-
-    #[test]
-    fn sync_leaves_blocks_that_already_exist_untouched() {
-        // config가 원본이 된 뒤로 동기화는 정상 상태에서 no-op이어야 한다 —
-        // 유추로 채운 값이 사용자의 손글씨 블록에 역주입되면 안 된다.
-        let ctx = Ctx::new();
-        let original = "Host manual\n  HostName 1.1.1.1\n";
-        ctx.write_config(original);
-        let store = ctx.store();
-        assert_eq!(store.list_servers().len(), 1);
-
-        sync_servers_to_config_in(&ctx.ssh(), &ctx.keys(), &store).unwrap();
-        assert_eq!(ctx.config(), original);
-    }
-
-    #[test]
-    fn sync_restores_a_block_that_vanished_behind_the_apps_back() {
-        // 남은 유일한 쓸모: 앱 밖에서 블록이 지워졌을 때 되살리기.
-        let ctx = Ctx::new();
-        let mut store = ctx.store();
-        store.insert_server(&dto("web")).unwrap();
-        ctx.write_config("# 사용자가 블록만 지웠다\n");
-
-        sync_servers_to_config_in(&ctx.ssh(), &ctx.keys(), &store).unwrap();
-        let out = ctx.config();
-        assert!(out.contains("# 사용자가 블록만 지웠다"), "{out}");
-        assert!(out.contains("Host web"), "{out}");
     }
 
     #[test]
@@ -473,45 +365,64 @@ Host *
     }
 
     #[test]
-    fn import_is_a_no_op_because_every_writable_host_is_already_a_server() {
-        // config가 원본이 된 뒤 이 함수는 사실상 잉여다 — 쓰기 가능한 블록은
-        // load 시점에 이미 서버로 잡혀 있다.
-        let ctx = Ctx::new();
-        ctx.write_config("Host dup\n  HostName x\n\nHost fresh\n  HostName y\n");
-        let mut store = ctx.store();
-        assert_eq!(store.list_servers().len(), 2);
-
-        let imported = sync_config_to_servers_in(&ctx.ssh(), &mut store).unwrap();
-        assert!(imported.is_empty());
-    }
-
-    #[test]
-    fn import_returns_empty_when_config_is_missing() {
-        let ctx = Ctx::new();
-        let mut store = ctx.store();
-        let imported = sync_config_to_servers_in(&ctx.ssh(), &mut store).unwrap();
-        assert!(imported.is_empty());
-    }
-
-    #[test]
-    fn leaves_multi_pattern_blocks_alone_and_stays_idempotent() {
+    fn never_edits_a_multi_pattern_block_even_though_its_patterns_are_listed() {
         let ctx = Ctx::new();
         let original = "Host a b\n  User multi\n\nMatch all\n  User m\n";
         ctx.write_config(original);
         let mut store = ctx.store();
-        // `Host a b`(패턴 두 개)는 읽기 전용이라 서버 목록에 뜨지 않는다.
-        assert!(store.list_servers().is_empty());
+        // Phase 3: `Host a b`의 패턴 둘 다 읽기 전용 항목으로 목록에 뜬다.
+        let listed: Vec<String> = store.list_servers().into_iter().map(|s| s.name).collect();
+        assert_eq!(listed, ["a", "b"]);
+        assert!(store.list_servers().iter().all(|s| s.read_only));
 
         // 이름이 "a b"인 서버는 그와 별개다 — 따옴표로 감싼 새 블록이 된다.
         store.insert_server(&dto("a b")).unwrap();
-        let once = ctx.config();
-        assert!(once.starts_with(original), "{once}");
-        assert!(once.contains("Host \"a b\"\n"), "{once}");
+        let out = ctx.config();
+        assert!(out.starts_with(original), "{out}");
+        assert!(out.contains("Host \"a b\"\n"), "{out}");
+        assert_eq!(out.matches("Host \"a b\"").count(), 1);
+        // 읽기 전용 블록은 한 바이트도 바뀌지 않는다.
+        assert!(out.contains("Host a b\n  User multi\n"), "{out}");
+    }
 
-        let store = ctx.store();
-        sync_servers_to_config_in(&ctx.ssh(), &ctx.keys(), &store).unwrap();
-        let twice = ctx.config();
-        assert_eq!(once, twice);
-        assert_eq!(twice.matches("Host \"a b\"").count(), 1);
+    #[test]
+    fn rename_identity_file_follows_the_key_in_every_block_it_appears() {
+        // 별칭 접속에는 `-i` 안전망이 없다 — config의 경로가 유일한 키 지정이다.
+        let ctx = Ctx::new();
+        let old_path = ctx.keys().join("id_old");
+        let new_path = ctx.keys().join("id_new");
+        let original = format!(
+            concat!(
+                "# 머리말\n",
+                "Host one\n",
+                "  HostName 1.1.1.1\n",
+                "  IdentityFile {old}\n",
+                "\n",
+                "Host two\n",
+                "  HostName 2.2.2.2\n",
+                "  IdentityFile {old}\n",
+                "  IdentityFile ~/.ssh/id_rsa\n",
+                "\n",
+                "Host untouched\n",
+                "  IdentityFile ~/.ssh/other\n",
+            ),
+            old = old_path.display()
+        );
+        ctx.write_config(&original);
+        let mut store = ctx.store();
+
+        assert!(store.rename_identity_file(&old_path, &new_path).unwrap());
+
+        let out = ctx.config();
+        assert_eq!(out, original.replace(&old_path.display().to_string(), &new_path.display().to_string()));
+        assert_eq!(out.matches(&new_path.display().to_string()).count(), 2);
+        assert!(!out.contains(&format!("{}\n", old_path.display())));
+        // 그 외 줄은 바이트 그대로다.
+        assert!(out.contains("# 머리말\n"));
+        assert!(out.contains("  IdentityFile ~/.ssh/id_rsa\n"));
+        assert!(out.contains("  IdentityFile ~/.ssh/other\n"));
+
+        // 가리키는 줄이 없으면 파일을 건드리지 않는다.
+        assert!(!store.rename_identity_file(&old_path, &new_path).unwrap());
     }
 }

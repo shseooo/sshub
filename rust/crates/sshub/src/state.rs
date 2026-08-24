@@ -104,6 +104,18 @@ impl AppState {
         cx.notify();
     }
 
+    /// 앱 밖에서 `~/.ssh/config`(또는 사이드카)가 바뀌었으면 다시 읽는다.
+    /// 실제로 달라졌을 때만 이벤트를 쏜다 — 창을 오갈 때마다 목록이
+    /// 다시 그려지면 스크롤과 선택이 튄다. 두 파일 중 어느 것도 쓰지 않는다.
+    /// 바뀐 게 있었으면 `true`.
+    pub fn refresh_from_disk(&mut self, cx: &mut Context<Self>) -> bool {
+        let changed = self.core.lock().unwrap().store.reload_if_changed();
+        if changed {
+            self.reload_servers(cx);
+        }
+        changed
+    }
+
     pub fn set_error(&mut self, err: Option<String>, cx: &mut Context<Self>) {
         self.last_error = err;
         cx.notify();

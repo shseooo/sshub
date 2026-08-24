@@ -1,7 +1,11 @@
 //! 설정 (Electron `src/pages/Settings.tsx`).
 //!
-//! export/import/config sync는 전부 `AppState::spawn_core` 경유 — scrypt와
-//! 파일 I/O가 초 단위로 걸릴 수 있다.
+//! export/import는 전부 `AppState::spawn_core` 경유 — scrypt와 파일 I/O가
+//! 초 단위로 걸릴 수 있다.
+//!
+//! Phase 3에서 "SSH Config Sync" 두 버튼을 걷어냈다. config가 곧 스토어라
+//! 동기화할 상대가 없다 — 남는 것은 원본 파일이 어디인지 보여 주고, 방금
+//! 바깥에서 고친 내용을 즉시 반영하는 "다시 읽기" 하나다.
 //!
 //! 폐기된 것(DESIGN-ui.md §4): CRT 배경 톤 프리셋. 어센트는 새 테마의
 //! 프리셋 4종 + 커스텀 hex로 유지한다.
@@ -10,11 +14,11 @@ use std::path::PathBuf;
 
 use gpui::{
     div, prelude::*, px, App, Context, Entity, EventEmitter, IntoElement, PathPromptOptions,
-    Subscription, Window,
+    SharedString, Subscription, Window,
 };
 use sshub_core::backup::{self, ExportOptions};
 use sshub_core::settings::Settings;
-use sshub_core::{ssh_config, CoreError};
+use sshub_core::CoreError;
 
 use crate::i18n::{tr, tr_with, Lang, TrKey};
 use crate::keymap;
@@ -141,8 +145,7 @@ pub struct SettingsView {
     passphrase: Entity<TextInput>,
     /// 카드 하단 인라인 메시지 (원본과 동일하게 단일 슬롯).
     message: Option<String>,
-    syncing_to: bool,
-    syncing_from: bool,
+
     /// 내보내기 선택 모달 — `Some(encrypted)`.
     export_select: Option<bool>,
     selected_servers: HashSet<i64>,
@@ -293,8 +296,7 @@ impl SettingsView {
             accent_input,
             passphrase,
             message: None,
-            syncing_to: false,
-            syncing_from: false,
+
             export_select: None,
             selected_servers: HashSet::new(),
             selected_keys: HashSet::new(),
@@ -360,76 +362,23 @@ impl SettingsView {
         cx.notify();
     }
 
-    // -- SSH config 동기화 ---------------------------------------------------
+    // -- SSH config ---------------------------------------------------------
 
-    fn sync_to_config(&mut self, cx: &mut Context<Self>) {
-        self.syncing_to = true;
+    /// 디스크를 다시 본다. 파일은 건드리지 않는다 — 사용자가 방금 저장한
+    /// 내용을 앱이 되받아쓰면 그게 곧 손실이다.
+    fn reload_config(&mut self, cx: &mut Context<Self>) {
+        let changed = self
+            .state
+            .update(cx, |state, cx| state.refresh_from_disk(cx));
+        let lang = current_lang(cx);
+        self.message = Some(
+            tr(
+                lang,
+                if changed { TrKey::SettingsReloadDone } else { TrKey::SettingsReloadNoChange },
+            )
+            .to_string(),
+        );
         cx.notify();
-        let task = self.state.update(cx, |state, cx| {
-            state.spawn_core(cx, move |core| {
-                ssh_config::sync_servers_to_config(&core.store, &core.keys_dir)
-            })
-        });
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                view.syncing_to = false;
-                let lang = current_lang(cx);
-                view.message = Some(match result {
-                    Ok(()) => tr(lang, TrKey::SettingsSyncToDone).to_string(),
-                    Err(err) => tr_with(
-                        lang,
-                        TrKey::SettingsSyncToFail,
-                        &[("err", &err.to_string())],
-                    ),
-                });
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn sync_from_config(&mut self, cx: &mut Context<Self>) {
-        self.syncing_from = true;
-        cx.notify();
-        let task = self.state.update(cx, |state, cx| {
-            state.spawn_core(cx, move |core| {
-                ssh_config::sync_config_to_servers(&mut core.store)
-            })
-        });
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            this.update(cx, |view, cx| {
-                view.syncing_from = false;
-                let lang = current_lang(cx);
-                view.message = Some(match result {
-                    Ok(imported) if imported.is_empty() => {
-                        tr(lang, TrKey::SettingsImportFromConfigNone).to_string()
-                    }
-                    Ok(imported) => {
-                        let names: Vec<&str> =
-                            imported.iter().map(|s| s.name.as_str()).collect();
-                        tr_with(
-                            lang,
-                            TrKey::SettingsImportFromConfigDone,
-                            &[
-                                ("n", &imported.len().to_string()),
-                                ("names", &names.join(", ")),
-                            ],
-                        )
-                    }
-                    Err(err) => tr_with(
-                        lang,
-                        TrKey::SettingsImportFail,
-                        &[("err", &err.to_string())],
-                    ),
-                });
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
     }
 
     // -- 내보내기 -----------------------------------------------------------
@@ -714,10 +663,12 @@ impl SettingsView {
             .bg(t.surface)
     }
 
+    /// `description`이 `SharedString`인 이유: config 파일 경로처럼 런타임에
+    /// 정해지는 값도 이 행으로 보여 준다.
     fn labeled_row(
         &self,
         title: &'static str,
-        description: &'static str,
+        description: impl Into<SharedString>,
         control: impl IntoElement,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -738,7 +689,7 @@ impl SettingsView {
                         div()
                             .text_size(px(11.))
                             .text_color(t.text_muted)
-                            .child(description),
+                            .child(description.into()),
                     ),
             )
             .child(control)
@@ -784,44 +735,23 @@ impl Render for SettingsView {
         let settings = self.state.read(cx).settings.clone();
         let paths = self.state.read(cx).paths.clone();
 
-        // --- SSH Config Sync ---
-        let sync_card = self
+        // --- SSH Config (접속 정보의 원본) ---
+        let config_card = self
             .card(cx)
-            .child(self.section("SSH Config Sync", cx))
+            .child(self.section("SSH Config", cx))
             .child(
                 div()
                     .text_size(px(11.))
                     .text_color(t.text_muted)
-                    .child(tr(lang, TrKey::SettingsSyncDesc)),
+                    .child(tr(lang, TrKey::SettingsConfigDesc)),
             )
             .child(self.labeled_row(
-                tr(lang, TrKey::SettingsToConfigTitle),
-                tr(lang, TrKey::SettingsToConfigDesc),
-                Button::new(
-                    "sync-to-config",
-                    if self.syncing_to {
-                        tr(lang, TrKey::SettingsSyncing)
-                    } else {
-                        tr(lang, TrKey::SettingsSync)
-                    },
-                )
-                .disabled(self.syncing_to)
-                .on_click(cx.listener(|this, _, _window, cx| this.sync_to_config(cx))),
-                cx,
-            ))
-            .child(self.labeled_row(
-                tr(lang, TrKey::SettingsFromConfigTitle),
-                tr(lang, TrKey::SettingsFromConfigDesc),
-                Button::new(
-                    "sync-from-config",
-                    if self.syncing_from {
-                        tr(lang, TrKey::CommonImporting)
-                    } else {
-                        tr(lang, TrKey::CommonImport)
-                    },
-                )
-                .disabled(self.syncing_from)
-                .on_click(cx.listener(|this, _, _window, cx| this.sync_from_config(cx))),
+                tr(lang, TrKey::SettingsConfigPath),
+                // 경로를 그대로 보여 준다 — 어느 파일을 열어야 하는지가
+                // 이 화면에서 가장 자주 필요한 정보다.
+                paths.ssh_config_file.display().to_string(),
+                Button::new("reload-config", tr(lang, TrKey::SettingsReload))
+                    .on_click(cx.listener(|this, _, _window, cx| this.reload_config(cx))),
                 cx,
             ))
             .when_some(self.message.clone(), |el, message| {
@@ -1080,7 +1010,7 @@ impl Render for SettingsView {
             .flex_col()
             .gap(px(14.))
             .max_w(px(720.))
-            .child(sync_card)
+            .child(config_card)
             .child(backup_card)
             .child(general_card)
             .child(appearance_card)

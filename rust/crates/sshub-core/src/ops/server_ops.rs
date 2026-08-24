@@ -57,6 +57,8 @@ pub fn insert_server(
         last_connected_at: None,
         created_at: Some(now.to_string()),
         updated_at: Some(now.to_string()),
+        // 이 경로로 만들어지는 서버는 항상 앱 소유 블록이다.
+        read_only: false,
     };
     let mut servers = store.servers.clone();
     servers.push(server.clone());
@@ -108,6 +110,7 @@ pub fn update_server(
         last_connected_at: prev.last_connected_at.clone(),
         created_at: prev.created_at.clone(),
         updated_at: Some(now.to_string()),
+        read_only: prev.read_only,
     };
     let mut servers = store.servers.clone();
     servers[idx] = server.clone();

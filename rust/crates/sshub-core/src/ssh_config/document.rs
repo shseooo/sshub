@@ -575,6 +575,42 @@ impl Document {
         before != block.entries.len()
     }
 
+    /// `IdentityFile` 값이 `from`과 **정확히** 같은 줄을 전부 `to`로 바꾸고
+    /// 바꾼 줄 수를 돌려준다.
+    ///
+    /// 여기만 읽기 전용 블록(`Host a b c`·`Host *`)에도 손을 댄다. 근거:
+    /// ① 줄을 더하거나 지우지 않고 값 하나만 옮긴다(왕복 불변식 유지),
+    /// ② `from`은 앱의 `keys_dir` 안 경로라 사용자가 손으로 관리하는 키와
+    ///    겹칠 수 없다, ③ 별칭 접속으로 바뀐 뒤로는 이 줄이 키를 지정하는
+    ///    유일한 경로라, 키 이름을 바꿨을 때 놔두면 그 호스트들이 통째로
+    ///    접속 불가가 된다.
+    pub fn rewrite_identity_file(&mut self, from: &str, to: &str) -> usize {
+        if from == to {
+            return 0;
+        }
+        let to = sanitize_config_value(to);
+        let mut changed = 0;
+        let mut apply = |entries: &mut Vec<Entry>| {
+            for entry in entries.iter_mut() {
+                if let Entry::Directive { key, value, raw } = entry {
+                    if key == "identityfile" && value == from {
+                        *raw = rewrite_value(raw, &to);
+                        *value = to.clone();
+                        changed += 1;
+                    }
+                }
+            }
+        };
+        for node in self.nodes.iter_mut() {
+            match node {
+                Node::Host(h) => apply(&mut h.entries),
+                Node::Match(m) => apply(&mut m.entries),
+                Node::Raw(_) => {}
+            }
+        }
+        changed
+    }
+
     /// `from` 블록의 별칭만 바꾼다 (단일 패턴 블록에서만).
     pub fn rename_host(&mut self, from: &str, to: &str) -> bool {
         let from = sanitize_config_value(from);

@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use sshub_core::model::{AuthType, Server};
-use sshub_core::{build_connect_banner, build_ssh_args, key_files, SshPaths};
+use sshub_core::model::Server;
+use sshub_core::{build_connect_banner, build_ssh_args};
 
 /// PTY에 넘길 실행 계획.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,44 +65,18 @@ pub fn plan_local(session_id: &str, cwd_from: Option<&str>, env: &SessionEnv<'_>
 }
 
 /// SSH 실행 계획. 원격 cwd는 복원할 수 없으므로 로컬 cwd는 홈으로 둔다.
-pub fn plan_ssh(server: &Server, keys_dir: &std::path::Path, key_name: Option<&str>, home: PathBuf) -> SpawnPlan {
-    let paths = resolve_ssh_paths(server, keys_dir, key_name);
+///
+/// Phase 3부터 접속 대상은 별칭 하나이고 키/포트/유저/점프 호스트는 전부
+/// `~/.ssh/config`의 Host 블록이 갖는다 — 그래서 여기서 키 경로를 해석할 일이
+/// 없어졌다(`resolve_ssh_paths` 삭제).
+pub fn plan_ssh(server: &Server, home: PathBuf) -> SpawnPlan {
     SpawnPlan {
         program: "ssh".to_string(),
-        args: build_ssh_args(server, &paths),
+        args: build_ssh_args(server),
         cwd: home,
         env: base_env(),
         banner: Some(build_connect_banner(server)),
     }
-}
-
-/// 인증 방식에 맞는 키/PEM 경로를 해석한다. **파일이 실제로 있을 때만**
-/// 넘긴다 — 없는 경로로 `-i`를 주면 ssh가 즉시 실패해, 에이전트나 기본 키로
-/// 붙을 수 있었을 기회까지 잃는다.
-pub fn resolve_ssh_paths(
-    server: &Server,
-    keys_dir: &std::path::Path,
-    key_name: Option<&str>,
-) -> SshPaths {
-    let mut paths = SshPaths::default();
-    match server.auth_type {
-        AuthType::Pem => {
-            let pem = keys_dir.join(key_files::server_pem_file_name(server.id));
-            if pem.exists() {
-                paths.pem_path = Some(pem.to_string_lossy().into_owned());
-            }
-        }
-        AuthType::Key => {
-            if let Some(name) = key_name {
-                let key = keys_dir.join(key_files::key_file_name(name));
-                if key.exists() {
-                    paths.key_path = Some(key.to_string_lossy().into_owned());
-                }
-            }
-        }
-        AuthType::Password | AuthType::Agent => {}
-    }
-    paths
 }
 
 fn base_env() -> Vec<(String, String)> {
@@ -205,52 +179,16 @@ mod tests {
     }
 
     #[test]
-    fn ssh_plan_carries_args_and_banner() {
-        let dir = tempfile::tempdir().unwrap();
-        let plan = plan_ssh(&server(AuthType::Agent), dir.path(), None, PathBuf::from("/home/u"));
+    fn ssh_plan_connects_through_the_alias_and_keeps_the_banner() {
+        let plan = plan_ssh(&server(AuthType::Agent), PathBuf::from("/home/u"));
         assert_eq!(plan.program, "ssh");
-        assert!(plan.args.contains(&"deploy@example.com".to_string()));
-        assert!(plan.args.contains(&"-p".to_string()), "22가 아니면 포트 인자");
+        assert_eq!(plan.args.last().unwrap(), "prod", "별칭 하나가 접속 대상");
+        // 포트·유저·호스트는 config 블록의 몫이다 — 커맨드라인에 없어야 한다.
+        assert!(!plan.args.iter().any(|a| a == "-p" || a.contains('@')), "{:?}", plan.args);
         let banner = plan.banner.unwrap();
         assert!(banner.contains("deploy@example.com:2200"));
         assert!(banner.starts_with("\u{1b}[90m"), "회색 SGR로 시작");
         assert_eq!(plan.cwd, PathBuf::from("/home/u"), "SSH는 로컬 홈에서 실행");
-    }
-
-    #[test]
-    fn key_auth_only_passes_identity_when_the_file_exists() {
-        let dir = tempfile::tempdir().unwrap();
-        let srv = server(AuthType::Key);
-
-        // 파일이 없으면 -i 를 넘기지 않는다.
-        let paths = resolve_ssh_paths(&srv, dir.path(), Some("work key"));
-        assert_eq!(paths.key_path, None);
-
-        std::fs::write(dir.path().join("id_work_key"), b"x").unwrap();
-        let paths = resolve_ssh_paths(&srv, dir.path(), Some("work key"));
-        assert!(paths.key_path.unwrap().ends_with("id_work_key"), "새니타이즈된 파일명 사용");
-    }
-
-    #[test]
-    fn pem_auth_resolves_the_per_server_pem_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let srv = server(AuthType::Pem);
-        assert_eq!(resolve_ssh_paths(&srv, dir.path(), None).pem_path, None);
-
-        std::fs::write(dir.path().join("pem_server_7"), b"x").unwrap();
-        let paths = resolve_ssh_paths(&srv, dir.path(), None);
-        assert!(paths.pem_path.unwrap().ends_with("pem_server_7"));
-    }
-
-    #[test]
-    fn password_and_agent_auth_never_pass_identity_files() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("pem_server_7"), b"x").unwrap();
-        for auth in [AuthType::Password, AuthType::Agent] {
-            let paths = resolve_ssh_paths(&server(auth), dir.path(), Some("k"));
-            assert_eq!(paths.key_path, None);
-            assert_eq!(paths.pem_path, None);
-        }
     }
 
     #[test]

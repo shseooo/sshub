@@ -164,6 +164,10 @@ impl ServerListView {
         // 목록은 원본과 동일하게 포트를 항상 노출한다 (대시보드만 22를 감춘다).
         let subtitle = format!("{}@{}:{}", server.username, server.host, server.port);
         let favorite = server.is_favorite;
+        // `Host a b c` 같은 블록에서 온 항목. 접속은 되지만 config를 고치는
+        // 조작(편집·삭제)은 막는다 — 패턴 하나를 손대면 나머지 패턴의 의미가
+        // 같이 바뀐다. 즐겨찾기는 사이드카(별칭 키)에만 쓰므로 그대로 둔다.
+        let read_only = server.read_only;
 
         let meta = div()
             .flex()
@@ -180,6 +184,19 @@ impl ServerListView {
                         .text_size(px(11.))
                         .text_color(t.text_muted)
                         .child(g),
+                )
+            })
+            .when(read_only, |el| {
+                el.child(
+                    div()
+                        .px(px(6.))
+                        .py(px(1.))
+                        .rounded(px(4.))
+                        .border_1()
+                        .border_color(t.border)
+                        .text_size(px(11.))
+                        .text_color(t.text_disabled)
+                        .child(tr(lang, TrKey::ListReadOnly)),
                 )
             });
 
@@ -232,12 +249,15 @@ impl ServerListView {
                     })),
             )
             .child(
-                Button::new(("edit", id as usize), tr(lang, TrKey::CommonEdit)).on_click(
-                    cx.listener(move |_, _, _window, cx| {
+                Button::new(("edit", id as usize), tr(lang, TrKey::CommonEdit))
+                    .disabled(read_only)
+                    .on_click(cx.listener(move |_, _, _window, cx| {
                         cx.stop_propagation();
+                        if read_only {
+                            return;
+                        }
                         cx.emit(ViewEvent::Navigate(Page::ServerEdit { id: Some(id) }));
-                    }),
-                ),
+                    })),
             )
             .child(
                 div()
@@ -261,22 +281,26 @@ impl ServerListView {
                         });
                     })),
             )
-            .child(
-                div()
-                    .id(("delete", id as usize))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(26.))
-                    .rounded(px(6.))
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(t.hover))
-                    .child(icon(Icon::Trash).color(t.text_disabled))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        cx.stop_propagation();
-                        this.ask_delete(id, window, cx);
-                    })),
-            );
+            // 삭제 버튼은 아예 그리지 않는다 — 눌러도 아무 일이 없는 버튼보다
+            // 없는 편이 "이 항목은 앱 소유가 아니다"를 정확히 전달한다.
+            .when(!read_only, |el| {
+                el.child(
+                    div()
+                        .id(("delete", id as usize))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size(px(26.))
+                        .rounded(px(6.))
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(t.hover))
+                        .child(icon(Icon::Trash).color(t.text_disabled))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.ask_delete(id, window, cx);
+                        })),
+                )
+            });
 
         div()
             .id(("server-row", id as usize))

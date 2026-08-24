@@ -46,6 +46,7 @@ const en: Dict = {
   'list.emptyHintNoMatch': 'Try a different search term.',
   'list.confirmDelete': 'Delete this server?',
   'list.confirmDeleteTitle': 'Delete server',
+  'list.readOnly': 'Read-only',
   // server edit
   'edit.name': 'Name',
   'edit.group': 'Group',
@@ -172,6 +173,12 @@ const en: Dict = {
   'settings.importFromConfigDone': 'Imported {n} new servers: {names}',
   'settings.importFromConfigNone': 'No new servers to import. (existing names are skipped)',
   'settings.importFail': 'Import failed: {err}',
+  'settings.configDesc':
+    'The server list is this file. Hand-edited hosts show up automatically; use Reload to pick up changes right away.',
+  'settings.configPath': 'Config file',
+  'settings.reload': 'Reload',
+  'settings.reloadDone': 'Reloaded ~/.ssh/config.',
+  'settings.reloadNoChange': 'Already up to date.',
   'settings.backupDesc':
     "Export the server list to a file and import it on another machine. Secrets aren't included; matching names are skipped.",
   'settings.exportDesc': 'Save the current server/key list as a JSON file.',
@@ -256,6 +263,7 @@ const ko: Dict = {
   'list.emptyHintNoMatch': '다른 검색어를 입력해 보세요.',
   'list.confirmDelete': '정말 이 서버를 삭제하시겠습니까?',
   'list.confirmDeleteTitle': '서버 삭제',
+  'list.readOnly': '읽기 전용',
   'edit.name': '이름',
   'edit.group': '그룹',
   'edit.groupPlaceholder': '예: production',
@@ -376,6 +384,12 @@ const ko: Dict = {
   'settings.importFromConfigDone': '{n}개의 새 서버를 가져왔습니다: {names}',
   'settings.importFromConfigNone': '가져올 새 서버가 없습니다. (이미 등록된 이름은 건너뜁니다)',
   'settings.importFail': '가져오기 실패: {err}',
+  'settings.configDesc':
+    '서버 목록이 곧 이 파일입니다. 손으로 추가한 호스트도 그대로 나타나며, 바로 반영하려면 다시 읽기를 누르세요.',
+  'settings.configPath': '설정 파일',
+  'settings.reload': '다시 읽기',
+  'settings.reloadDone': '~/.ssh/config를 다시 읽었습니다.',
+  'settings.reloadNoChange': '변경된 내용이 없습니다.',
   'settings.backupDesc':
     '서버 목록을 파일로 내보내고 다른 기기에서 가져옵니다. 비밀 키는 포함되지 않으며, 이름이 같은 항목은 건너뜁니다.',
   'settings.exportDesc': '현재 서버·키 목록을 JSON 파일로 저장합니다.',
@@ -459,6 +473,7 @@ const ja: Dict = {
   'list.emptyHintNoMatch': '別のキーワードで検索してください。',
   'list.confirmDelete': 'このサーバーを削除しますか？',
   'list.confirmDeleteTitle': 'サーバー削除',
+  'list.readOnly': '読み取り専用',
   'edit.name': '名前',
   'edit.group': 'グループ',
   'edit.groupPlaceholder': '例: production',
@@ -580,6 +595,12 @@ const ja: Dict = {
   'settings.importFromConfigDone': '{n} 件の新規サーバーを取り込みました: {names}',
   'settings.importFromConfigNone': '取り込む新規サーバーはありません。(既存の名前はスキップ)',
   'settings.importFail': 'インポート失敗: {err}',
+  'settings.configDesc':
+    'サーバー一覧はこのファイルそのものです。手書きのホストもそのまま表示され、すぐ反映するには再読み込みを押します。',
+  'settings.configPath': '設定ファイル',
+  'settings.reload': '再読み込み',
+  'settings.reloadDone': '~/.ssh/config を再読み込みしました。',
+  'settings.reloadNoChange': '変更はありません。',
   'settings.backupDesc':
     'サーバー一覧をファイルに書き出し、別の端末で取り込みます。秘密鍵は含まれず、同名の項目はスキップされます。',
   'settings.exportDesc': '現在のサーバー・キー一覧をJSONファイルに保存します。',
