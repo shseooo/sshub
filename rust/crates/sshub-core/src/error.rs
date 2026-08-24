@@ -49,9 +49,6 @@ pub enum CoreError {
     #[error("패스프레이즈 변경 실패 — 현재 패스프레이즈가 맞는지 확인하세요. ({0})")]
     ChangePassphrase(String),
 
-    #[error("등록된 서버가 없어 ~/.ssh/config를 덮어쓰지 않았습니다.")]
-    NoServersForConfig,
-
     /// ssh-keygen 실패 — stderr trim 그대로 노출 (JS keygen() 헬퍼와 동일).
     #[error("{0}")]
     Keygen(String),

@@ -1,32 +1,19 @@
-//! ssh config → 서버 DTO 파서 (sshConfig.ts 직역).
-//! `hostname|user|port|proxyjump`(대소문자 무관)만 읽고, 첫 `=`/공백에서
-//! 분리하며, `*`/`?` 와일드카드 Host는 스킵한다.
+//! ssh config → 서버 DTO 파서. 파서는 `document.rs` 하나뿐이고 여기서는
+//! Host 블록을 앱의 `CreateServerDto`로 투영하기만 한다.
+//!
+//! 보존한 기존 동작(quirk):
+//! - `*`/`?` 와일드카드 Host는 건너뛴다 (`!` 부정 패턴도 같은 이유로 추가).
+//! - `HostName`이 없으면 Host 별칭을 그대로 호스트로 쓴다.
+//! - `User`가 없으면 `"user"`로 채운다.
+//! - 잘못된 `Port`는 22 (JS `parseInt` 접두부 파싱 규칙까지 동일).
+//! - `auth_type`은 항상 `Key` (config에는 인증 방식 정보가 없다).
+//! - 같은 키가 여러 번 나오면 **마지막 값**이 이긴다 (ssh 본체는 첫 값이
+//!   이기지만, 기존 import 동작을 바꾸지 않기 위해 유지).
+//! - `Host a b c`처럼 패턴이 여러 개면 공백으로 이어붙인 한 이름이 된다
+//!   (기존 동작). 그런 블록은 문서 모델에서 읽기 전용이라 되쓰기는 되지 않는다.
 
 use crate::model::{AuthType, CreateServerDto};
-
-struct Block {
-    host: String,
-    hostname: Option<String>,
-    user: Option<String>,
-    port: i64,
-    proxy_jump: Option<String>,
-}
-
-fn flush(block: Option<Block>, entries: &mut Vec<CreateServerDto>) {
-    let Some(b) = block else { return };
-    if b.host.contains('*') || b.host.contains('?') {
-        return; // 와일드카드 패턴
-    }
-    entries.push(CreateServerDto {
-        name: b.host.clone(),
-        host: b.hostname.unwrap_or(b.host),
-        port: Some(b.port),
-        username: b.user.unwrap_or_else(|| "user".into()),
-        auth_type: AuthType::Key,
-        proxy_jump: b.proxy_jump,
-        ..Default::default()
-    });
-}
+use crate::ssh_config::document::{has_wildcard, Document, Entry};
 
 /// JS `parseInt(value, 10)`: 선행 부호 + 십진 숫자 접두부만 읽는다
 /// ("2200x" → 2200, "nope" → None).
@@ -44,43 +31,36 @@ fn js_parse_int(s: &str) -> Option<i64> {
 }
 
 pub fn parse_ssh_config(content: &str) -> Vec<CreateServerDto> {
+    let doc = Document::parse(content);
     let mut entries = Vec::new();
-    let mut cur: Option<Block> = None;
 
-    for line in content.split('\n') {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+    for block in doc.hosts() {
+        let name = block.patterns.join(" ");
+        if name.is_empty() || has_wildcard(&name) {
             continue;
         }
-
-        if let Some(rest) = trimmed.strip_prefix("Host ") {
-            flush(cur.take(), &mut entries);
-            cur = Some(Block {
-                host: rest.trim().to_string(),
-                hostname: None,
-                user: None,
-                port: 22,
-                proxy_jump: None,
-            });
-            continue;
+        let (mut hostname, mut user, mut proxy_jump) = (None, None, None);
+        let mut port = 22i64;
+        for entry in &block.entries {
+            let Entry::Directive { key, value, .. } = entry else { continue };
+            match key.as_str() {
+                "hostname" => hostname = Some(value.clone()),
+                "user" => user = Some(value.clone()),
+                "port" => port = js_parse_int(value).unwrap_or(22),
+                "proxyjump" => proxy_jump = Some(value.clone()),
+                _ => {}
+            }
         }
-
-        // 첫 '=' 또는 공백에서 분리.
-        let Some(i) = trimmed.find(|c: char| c == '=' || c.is_whitespace()) else {
-            continue;
-        };
-        let key = trimmed[..i].trim().to_lowercase();
-        let value = trimmed[i + 1..].trim();
-        let Some(b) = cur.as_mut() else { continue };
-        match key.as_str() {
-            "hostname" => b.hostname = Some(value.to_string()),
-            "user" => b.user = Some(value.to_string()),
-            "port" => b.port = js_parse_int(value).unwrap_or(22),
-            "proxyjump" => b.proxy_jump = Some(value.to_string()),
-            _ => {}
-        }
+        entries.push(CreateServerDto {
+            name: name.clone(),
+            host: hostname.unwrap_or(name),
+            port: Some(port),
+            username: user.unwrap_or_else(|| "user".into()),
+            auth_type: AuthType::Key,
+            proxy_jump,
+            ..Default::default()
+        });
     }
-    flush(cur, &mut entries);
     entries
 }
 
@@ -139,5 +119,20 @@ mod tests {
     #[test]
     fn falls_back_to_port_22_on_an_invalid_port() {
         assert_eq!(parse_ssh_config("Host x\n  Port nope\n")[0].port, Some(22));
+    }
+
+    #[test]
+    fn reads_spaced_equals_and_quoted_values() {
+        // 옛 파서는 `Key = Value`에서 값이 "= Value"가 되는 버그가 있었다.
+        let e = parse_ssh_config("Host s\n  HostName = 1.2.3.4\n  User = \"deploy\"\n");
+        assert_eq!(e[0].host, "1.2.3.4");
+        assert_eq!(e[0].username, "deploy");
+    }
+
+    #[test]
+    fn does_not_leak_directives_of_a_match_block_into_the_previous_host() {
+        let e = parse_ssh_config("Host a\n  HostName h\n\nMatch host b\n  User leaked\n");
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].username, "user");
     }
 }

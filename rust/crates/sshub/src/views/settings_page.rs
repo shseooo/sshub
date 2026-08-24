@@ -366,7 +366,9 @@ impl SettingsView {
         self.syncing_to = true;
         cx.notify();
         let task = self.state.update(cx, |state, cx| {
-            state.spawn_core(cx, move |core| ssh_config::sync_servers_to_config(&core.store))
+            state.spawn_core(cx, move |core| {
+                ssh_config::sync_servers_to_config(&core.store, &core.keys_dir)
+            })
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
