@@ -18,7 +18,7 @@ use sshub::theme::Theme;
 use sshub::views::settings_page::parse_hex_color;
 use sshub::window_session::{restore_windows, WindowRecord, DEFAULT_BOUNDS};
 use sshub::workspace::{self, MoveTabToNewWindow};
-use sshub::{keymap, session_registry, state, theme, ui, window_manager};
+use sshub::{fonts, keymap, session_registry, state, theme, ui, window_manager};
 
 actions!(sshub_app, [Quit]);
 
@@ -49,6 +49,10 @@ fn main() {
         let app_state_entity = state::init(cx);
         let settings: Settings = app_state_entity.read(cx).settings.clone();
 
+        // 테마가 폰트 패밀리를 들고 있으므로 등록이 먼저다.
+        if fonts::register(cx) {
+            cx.set_global(EmbeddedFontOk);
+        }
         theme::init(cx);
         apply_appearance(&settings, cx);
 
@@ -124,6 +128,14 @@ fn last_known_bounds(cx: &App) -> sshub_core::window_state::WindowBounds {
 }
 
 /// 설정의 어센트·반투명·터미널 색을 전역 테마에 굽는다.
+/// 내장 폰트가 등록됐는지 — 등록 실패 시 시스템 폰트로 떨어뜨리기 위해 남긴다.
+fn embedded_font_ok(cx: &App) -> bool {
+    cx.has_global::<EmbeddedFontOk>()
+}
+
+struct EmbeddedFontOk;
+impl gpui::Global for EmbeddedFontOk {}
+
 fn apply_appearance(settings: &Settings, cx: &mut App) {
     let accent = parse_hex_color(&settings.appearance.accent).unwrap_or(0x74ade8);
     let term_fg = settings
@@ -144,6 +156,10 @@ fn apply_appearance(settings: &Settings, cx: &mut App) {
         term_fg,
         term_bg,
         settings.appearance.terminal.font_size,
+        fonts::resolve_family(
+            settings.appearance.terminal.font_family.as_deref(),
+            embedded_font_ok(cx),
+        ),
     ));
 }
 

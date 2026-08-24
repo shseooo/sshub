@@ -5243,6 +5243,7 @@ dependencies = [
  "sshub-splits",
  "sshub-terminal",
  "tempfile",
+ "ttf-parser 0.25.1",
  "uuid",
 ]
 

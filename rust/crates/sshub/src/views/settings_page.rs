@@ -82,6 +82,10 @@ fn apply_theme(settings: &Settings, cx: &mut App) {
         term_fg,
         term_bg,
         settings.appearance.terminal.font_size,
+        crate::fonts::resolve_family(
+            settings.appearance.terminal.font_family.as_deref(),
+            true,
+        ),
     ));
 }
 

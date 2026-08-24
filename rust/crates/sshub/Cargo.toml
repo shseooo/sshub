@@ -17,5 +17,6 @@ futures.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+ttf-parser = "0.25"
 tempfile.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

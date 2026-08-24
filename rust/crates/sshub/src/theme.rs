@@ -26,6 +26,8 @@ pub struct Theme {
 
 #[derive(Clone, Debug)]
 pub struct TerminalTheme {
+    /// 터미널 고정폭 폰트 패밀리 (기본은 내장 D2Coding — `crate::fonts`).
+    pub font_family: String,
     pub foreground: Rgba,
     pub background: Rgba,
     pub cursor: Rgba,
@@ -47,7 +49,7 @@ pub const ACCENT_PRESETS: [(&str, u32); 4] = [
 
 impl Theme {
     pub fn default_dark() -> Self {
-        Self::with_overrides(0x74ade8, 0, None, None, 14.0)
+        Self::with_overrides(0x74ade8, 0, None, None, 14.0, crate::fonts::EMBEDDED_FAMILY.to_string())
     }
 
     pub fn with_overrides(
@@ -56,6 +58,7 @@ impl Theme {
         term_fg: Option<u32>,
         term_bg: Option<u32>,
         term_font_size: f32,
+        term_font_family: String,
     ) -> Self {
         let translucency = translucency.min(40);
         let accent_hsla = h(accent);
@@ -81,6 +84,7 @@ impl Theme {
             success: h(0x98c379),
             warning: h(0xdec184),
             terminal: TerminalTheme {
+                font_family: term_font_family,
                 foreground: rgb(term_fg.unwrap_or(0xc8ccd4)),
                 background: rgb(term_bg.unwrap_or(0x16181d)),
                 cursor: rgb(accent),

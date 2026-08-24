@@ -216,3 +216,20 @@ docs.rs만 보고 추정했던 것과 다른 지점 위주.
 - masked TextInput은 **Copy/Cut을 클립보드로 내보내지 않는다**(패스프레이즈 유출 방지).
   편집·IME·삭제는 실제 텍스트로 정상 동작하고, 화면 오프셋만
   `mask_offset`/`unmask_offset`(문자 인덱스 × 3바이트)으로 매핑한다.
+
+## 10. 터미널 폰트 — 한글 정렬
+
+macOS에는 한글 **고정폭** 폰트가 없다(AppleGothic·Apple SD Gothic Neo·Arial
+Unicode 전부 가변폭). Menlo에는 한글 글리프가 없어 폴백이 일어나고, 그 폰트의
+한글 폭이 터미널 2셀과 달라 글자마다 여백이 남는다.
+
+그래서 **D2Coding을 바이너리에 내장**한다(`crates/sshub/assets/fonts/`,
+SIL OFL 1.1 — OFL.txt 동봉). ASCII 0.5em / 한글 1.0em으로 정확히 2배라 격자에
+빈틈없이 맞는다. `fonts::register(cx)`가 부트스트랩에서 regular·bold를 등록하고,
+설정 `appearance.terminal.fontFamily`로 덮어쓸 수 있다(비어 있으면 내장 폰트).
+
+주의:
+- 폰트 파일 교체 시 `tests/embedded_font.rs`가 패밀리 이름과 2:1 폭 비율을 검증한다.
+- gpui 테스트 플랫폼은 `NoopTextSystem`이라 폰트 등록·메트릭을 런타임으로
+  검증할 수 없다. 파일 자체를 파싱해 확인한다.
+- 내장 때문에 릴리스 바이너리가 약 10MB → 19MB로 커진다.

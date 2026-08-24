@@ -54,6 +54,9 @@ pub struct Appearance {
 #[serde(rename_all = "camelCase")]
 pub struct TerminalAppearance {
     pub font_size: f32,
+    /// 비어 있으면 앱 내장 고정폭 한글 폰트(D2Coding)를 쓴다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foreground: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -102,7 +105,7 @@ impl Default for Appearance {
 
 impl Default for TerminalAppearance {
     fn default() -> Self {
-        Self { font_size: 14.0, foreground: None, background: None }
+        Self { font_size: 14.0, font_family: None, foreground: None, background: None }
     }
 }
 

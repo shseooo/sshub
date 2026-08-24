@@ -21,8 +21,9 @@ use crate::terminal_element::{
 };
 use crate::theme::theme;
 
-/// 기본 터미널 폰트. 설정에서 덮어쓴다.
-pub const DEFAULT_FONT_FAMILY: &str = "Menlo";
+/// 기본 터미널 폰트 — 앱에 내장한 D2Coding(한글이 ASCII 정확히 2배 폭).
+/// 설정에서 덮어쓸 수 있다.
+pub const DEFAULT_FONT_FAMILY: &str = crate::fonts::EMBEDDED_FAMILY;
 
 /// IME 조합 중 상태. 확정 전까지 PTY로 가지 않는다.
 struct ImeState {
