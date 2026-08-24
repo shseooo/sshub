@@ -13,7 +13,7 @@ use std::rc::Rc;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     canvas, div, px, AnyElement, App, AppContext as _, Bounds, CursorStyle, Entity, InteractiveElement, IntoElement,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, SharedString,
+    ClickEvent, MouseButton, ParentElement, Pixels, SharedString,
     StatefulInteractiveElement, Styled, Window,
 };
 use sshub_splits::{tab_title, TabId, TerminalTab};
@@ -172,17 +172,18 @@ fn render_tab(tab: &TerminalTab, ctx: &TabBarCtx<'_>) -> AnyElement {
         .when(active, |el| el.bg(theme.selected))
         .child(record)
         .child(label)
-        .on_mouse_down(
-            MouseButton::Left,
-            move |event: &MouseDownEvent, window, cx| {
-                // 더블클릭은 이름 변경, 단일 클릭은 선택.
-                if event.click_count >= 2 {
-                    (handlers.rename)(rename_id.clone(), window, cx);
-                } else {
-                    (handlers.select)(select_id.clone(), window, cx);
-                }
-            },
-        )
+        // 선택은 **클릭**(버튼 뗌) 시점에 한다. 누르자마자 활성화하면 탭을 끌어
+        // 다른 탭의 pane에 떨어뜨릴 때 이미 그 탭이 활성이라 "자기 자신에게
+        // 병합"이 되어 아무 일도 일어나지 않는다. gpui는 드래그가 시작되면
+        // pending mouse-down을 가져가므로 드래그 중에는 클릭이 발생하지 않는다.
+        .on_click(move |event: &ClickEvent, window, cx| {
+            let double = matches!(event, ClickEvent::Mouse(m) if m.down.click_count >= 2);
+            if double {
+                (handlers.rename)(rename_id.clone(), window, cx);
+            } else {
+                (handlers.select)(select_id.clone(), window, cx);
+            }
+        })
         .on_drag(
             TabDrag {
                 tab_id: tab.id.clone(),

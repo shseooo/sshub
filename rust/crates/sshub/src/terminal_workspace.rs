@@ -668,7 +668,10 @@ impl TerminalWorkspace {
         cx.notify();
     }
 
-    fn drop_on_pane(&mut self, target: SessionId, drag: Option<TabDrag>, pane: Option<PaneDrag>, window: &mut Window, cx: &mut Context<Self>) {
+    /// 드래그 드롭의 모델 연산 — 탭 전체(`drag`) 또는 pane 하나(`pane`)를
+    /// `target` pane 옆에 붙인다. 드롭 방향은 현재 포인터 위치에서 정한다.
+    /// (테스트에서 직접 호출하려고 공개해 둔다 — 드래그 제스처는 자동화가 어렵다.)
+    pub fn drop_on_pane(&mut self, target: SessionId, drag: Option<TabDrag>, pane: Option<PaneDrag>, window: &mut Window, cx: &mut Context<Self>) {
         let side = self.side_for(&target, window);
         // 미리보기는 여기서 소임을 다한다 — 다음 드래그가 첫 이동 이벤트를
         // 받기 전에 옛 하이라이트가 깜빡이지 않도록 즉시 지운다.

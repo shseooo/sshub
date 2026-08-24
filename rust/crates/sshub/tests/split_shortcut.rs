@@ -71,3 +71,67 @@ fn cmd_d_splits_the_focused_pane_and_starts_a_shell(cx: &mut TestAppContext) {
     let after_down = window.update(&mut vcx, |ws, _, _| active_leaves(ws)).unwrap();
     assert_eq!(after_down.len(), 3, "⇧⌘D는 위아래로 한 번 더 나눈다");
 }
+
+/// 탭을 다른 탭의 pane 위로 끌어다 놓으면 그 자리에서 분할되어야 한다.
+/// (사용자 보고: "터미널 탭을 드래그해서 다른 터미널의 분할로 넣기"가 안 됨.
+///  원인은 탭을 누르는 순간 활성화돼 자기 자신에게 병합되던 것 — 선택을 클릭
+///  시점으로 옮겨 고쳤고, 모델 쪽 동작을 여기서 고정한다.)
+#[gpui::test]
+fn dragging_a_tab_onto_another_tabs_pane_merges_it(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let paths = sshub_core::AppPaths::in_dir(dir.path().to_path_buf());
+    cx.update(|cx| {
+        sshub::state::init_with_paths(paths.clone(), cx);
+        sshub::theme::init(cx);
+        sshub::ui::init(cx);
+        sshub::keymap::register_all(cx, &sshub_core::settings::default_shortcuts());
+        sshub::session_registry::init(&paths, cx);
+    });
+
+    let window = cx.add_window(|window, cx| TerminalWorkspace::new(window, cx));
+    let mut vcx = VisualTestContext::from_window(window.into(), cx);
+    vcx.run_until_parked();
+
+    // 탭 2개: A(처음), B(새로 만든 것 — 만들면 B가 활성이 된다)
+    window.update(&mut vcx, |ws, window, cx| ws.new_tab(window, cx)).unwrap();
+    vcx.run_until_parked();
+
+    let (tab_a, tab_b, pane_a) = window
+        .update(&mut vcx, |ws, _, _| {
+            let a = ws.tabs()[0].clone();
+            let b = ws.tabs()[1].id.clone();
+            let pane = sshub_splits::leaves(&a.root)[0].session_id.clone();
+            (a.id, b, pane)
+        })
+        .unwrap();
+    assert_ne!(tab_a, tab_b);
+
+    // B를 A의 pane 위로 드롭
+    window
+        .update(&mut vcx, |ws, window, cx| {
+            ws.drop_on_pane(
+                pane_a.clone(),
+                Some(sshub::split_view::TabDrag { tab_id: tab_b.clone() }),
+                None,
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    vcx.run_until_parked();
+
+    let (tab_count, leaves_in_a) = window
+        .update(&mut vcx, |ws, _, _| {
+            let leaves = ws
+                .tabs()
+                .iter()
+                .find(|t| t.id == tab_a)
+                .map(|t| sshub_splits::leaves(&t.root).len())
+                .unwrap_or(0);
+            (ws.tabs().len(), leaves)
+        })
+        .unwrap();
+
+    assert_eq!(tab_count, 1, "옮겨온 탭은 사라져야 한다");
+    assert_eq!(leaves_in_a, 2, "받는 탭이 둘로 분할돼야 한다");
+}
