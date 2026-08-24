@@ -861,12 +861,15 @@ impl TerminalWorkspace {
                 let this = this.clone();
                 let session = session.clone();
                 ContextMenuItem::entry(tr(lang, TrKey::TermCopy), move |_window, cx| {
-                    this.update(cx, |this, cx| {
-                        if let Some(view) = this.views.get(&session).cloned() {
-                            view.update(cx, |view, cx| view.copy(cx));
-                        }
-                    })
-                    .ok();
+                    // 뷰 핸들만 먼저 꺼내고 워크스페이스 대여를 **끝낸 뒤** 호출한다
+                    // — 뷰 쪽에서 워크스페이스를 다시 건드릴 수 있기 때문(브로드캐스트).
+                    let view = this
+                        .update(cx, |this, _| this.views.get(&session).cloned())
+                        .ok()
+                        .flatten();
+                    if let Some(view) = view {
+                        view.update(cx, |view, cx| view.copy(cx));
+                    }
                 })
                 .hint(copy_hint)
             },
@@ -874,12 +877,15 @@ impl TerminalWorkspace {
                 let this = this.clone();
                 let session = session.clone();
                 ContextMenuItem::entry(tr(lang, TrKey::TermPaste), move |_window, cx| {
-                    this.update(cx, |this, cx| {
-                        if let Some(view) = this.views.get(&session).cloned() {
-                            view.update(cx, |view, cx| view.paste(cx));
-                        }
-                    })
-                    .ok();
+                    // 뷰 핸들만 먼저 꺼내고 워크스페이스 대여를 **끝낸 뒤** 호출한다
+                    // — 뷰 쪽에서 워크스페이스를 다시 건드릴 수 있기 때문(브로드캐스트).
+                    let view = this
+                        .update(cx, |this, _| this.views.get(&session).cloned())
+                        .ok()
+                        .flatten();
+                    if let Some(view) = view {
+                        view.update(cx, |view, cx| view.paste(cx));
+                    }
                 })
                 .hint(paste_hint)
             },
@@ -1172,8 +1178,16 @@ impl TerminalWorkspace {
         let this = cx.entity().downgrade();
         let source = session.clone();
         let sink: BroadcastSink = Rc::new(move |input, cx| {
-            this.update(cx, |this, cx| this.fan_out(source.clone(), input, cx))
-                .ok();
+            // **반드시 defer**. 붙여넣기는 워크스페이스 update 안에서 호출될 수
+            // 있고(컨텍스트 메뉴 항목이 그렇다), 거기서 워크스페이스를 동기적으로
+            // 다시 update하면 gpui가 재진입 panic을 낸다. 그 panic이 ObjC 마우스
+            // 콜백 안에서 터지면 unwind가 불가능해 앱이 abort된다(실제 크래시).
+            let this = this.clone();
+            let source = source.clone();
+            let input = input.clone();
+            cx.defer(move |cx| {
+                this.update(cx, |this, cx| this.fan_out(source, &input, cx)).ok();
+            });
         });
 
         let local = leaf.server_id.is_none();
@@ -1479,6 +1493,11 @@ impl TerminalWorkspace {
                     .ok();
             }),
         })
+    }
+
+    /// pane의 터미널 뷰 핸들 (테스트·외부 호출용).
+    pub fn pane_view(&self, session: &SessionId) -> Option<Entity<TerminalView>> {
+        self.views.get(session).cloned()
     }
 
     /// 마지막 렌더에서 각 pane이 차지한 영역 (좌→우, 위→아래 순).

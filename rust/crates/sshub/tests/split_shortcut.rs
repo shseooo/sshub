@@ -202,3 +202,46 @@ fn cmd_digit_jumps_to_that_tab_and_cmd_9_to_the_last(cx: &mut TestAppContext) {
     let active = window.update(&mut vcx, |ws, _, _| ws.active_tab_id().cloned()).unwrap();
     assert_eq!(active.as_ref(), Some(&ids[0]), "탭이 없으면 그대로");
 }
+
+/// 워크스페이스 update 안에서 붙여넣기를 호출해도 죽지 않아야 한다.
+///
+/// 컨텍스트 메뉴의 "붙여넣기"가 정확히 이 형태였다. 붙여넣기는 브로드캐스트를
+/// 발생시키고 그 싱크가 워크스페이스를 다시 update하는데, 이미 update 중이면
+/// gpui가 재진입 panic을 낸다. ObjC 마우스 콜백 안에서 터지면 unwind가 불가능해
+/// 앱이 그대로 abort된다(사용자 크래시 리포트: panic_cannot_unwind).
+#[gpui::test]
+fn pasting_from_inside_a_workspace_update_does_not_abort(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let paths = sshub_core::AppPaths::in_dir(dir.path().to_path_buf());
+    cx.update(|cx| {
+        sshub::state::init_with_paths(paths.clone(), cx);
+        sshub::theme::init(cx);
+        sshub::ui::init(cx);
+        sshub::keymap::register_all(cx, &sshub_core::settings::default_shortcuts());
+        sshub::session_registry::init(&paths, cx);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("붙여넣기 테스트".into()));
+    });
+
+    let window = cx.add_window(|window, cx| TerminalWorkspace::new(window, cx));
+    let mut vcx = VisualTestContext::from_window(window.into(), cx);
+    vcx.run_until_parked();
+
+    let session = window
+        .update(&mut vcx, |ws, _, _| active_leaves(ws)[0].clone())
+        .unwrap();
+
+    // 메뉴 콜백과 같은 중첩: 워크스페이스를 대여한 채 뷰의 paste를 호출한다.
+    window
+        .update(&mut vcx, |ws, _, cx| {
+            let view = ws.pane_view(&session).expect("pane 뷰");
+            view.update(cx, |view, cx| view.paste(cx));
+        })
+        .unwrap();
+    vcx.run_until_parked();
+
+    // 여기까지 왔으면 재진입 panic 없이 살아남은 것. 세션도 멀쩡해야 한다.
+    let live = vcx.update(|_, cx| {
+        sshub::session_registry::registry(cx).read(cx).is_live(&session)
+    });
+    assert!(live, "붙여넣기 후 세션이 죽었다");
+}
