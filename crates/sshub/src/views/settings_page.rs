@@ -22,7 +22,7 @@ use sshub_core::CoreError;
 
 use crate::i18n::{tr, tr_with, Lang, TrKey};
 use crate::keymap;
-use crate::state::{app_state, AppState};
+use crate::state::{app_state, AppState, StateEvent};
 use crate::theme::{theme, Theme, ACCENT_PRESETS};
 use crate::ui::icon::{icon, Icon};
 use crate::ui::select::SelectOption;
@@ -242,6 +242,17 @@ impl SettingsView {
         });
 
         let mut subscriptions = Vec::new();
+        // 언어를 바꾸면 이 화면 자신의 라벨부터 다시 그려져야 한다 — 관찰하지
+        // 않으면 다른 화면만 바뀌고 설정 화면은 옛 언어로 남아, 사용자 눈에는
+        // "적용이 안 된" 것으로 보인다.
+        subscriptions.push(cx.subscribe(
+            &state,
+            |_this: &mut Self, _, event: &StateEvent, cx| {
+                if matches!(event, StateEvent::SettingsChanged) {
+                    cx.notify();
+                }
+            },
+        ));
         subscriptions.push(cx.subscribe(
             &start_page,
             |this: &mut Self, select, event: &SelectEvent, cx| {

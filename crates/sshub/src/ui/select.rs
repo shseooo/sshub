@@ -3,6 +3,8 @@
 //! 키 바인딩은 `ui::init()`에서 context `"Select"`로 등록한다.
 use crate::theme::theme;
 use crate::ui::icon::Icon;
+use std::time::{Duration, Instant};
+
 use gpui::{
     actions, anchored, deferred, div, point, prelude::*, px, App, Context, ElementId, EventEmitter,
     FocusHandle, Focusable, IntoElement, MouseButton, MouseDownEvent, SharedString, Window,
@@ -77,8 +79,13 @@ pub fn clamp_ix(current: Option<usize>, len: usize) -> Option<usize> {
 
 // ---------------------------------------------------------------------------
 
+/// 바깥 클릭으로 닫힌 직후 트리거 클릭을 무시하는 시간.
+const REOPEN_GUARD: Duration = Duration::from_millis(250);
+
 pub struct Select {
     id: ElementId,
+    /// 마지막으로 바깥 클릭에 의해 닫힌 시각 — 트리거 재열림 방지용.
+    closed_at: Option<Instant>,
     focus_handle: FocusHandle,
     options: Vec<SelectOption>,
     selected_ix: Option<usize>,
@@ -92,6 +99,7 @@ pub struct Select {
 impl Select {
     pub fn new(id: impl Into<ElementId>, options: Vec<SelectOption>, cx: &mut Context<Self>) -> Self {
         Self {
+            closed_at: None,
             id: id.into(),
             focus_handle: cx.focus_handle(),
             options,
@@ -178,6 +186,12 @@ impl Select {
         if self.disabled {
             return;
         }
+        // 열린 상태에서 트리거를 누르면 팝업의 `on_mouse_down_out`이 mouse-down에
+        // 먼저 닫고, 이어서 mouse-up의 클릭이 여기로 온다. 그대로 두면 즉시 다시
+        // 열려 트리거로는 영영 닫을 수 없다 — 방금 닫힌 것이면 이 클릭은 삼킨다.
+        if self.closed_at.take().is_some_and(|t| t.elapsed() < REOPEN_GUARD) {
+            return;
+        }
         self.open = !self.open;
         if self.open {
             self.active_ix = self.selected_ix.or(Some(0));
@@ -189,6 +203,7 @@ impl Select {
     fn close(&mut self, cx: &mut Context<Self>) {
         if self.open {
             self.open = false;
+            self.closed_at = Some(Instant::now());
             cx.notify();
         }
     }
@@ -348,6 +363,13 @@ impl Render for Select {
                             // overflow_y_scroll은 Stateful<Div>에만 있다 (id 필요).
                             .id("select-menu")
                             .occlude()
+                            // **팝업 자신에** 건다. 트리거 루트에 걸면 deferred로
+                            // 그려진 메뉴가 루트 바깥이라, 항목을 누르는 순간
+                            // "바깥 클릭"으로 판정돼 메뉴가 닫히고 클릭이
+                            // 완성되지 못한다 — 선택이 통째로 먹히던 원인.
+                            .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _window, cx| {
+                                this.close(cx)
+                            }))
                             .min_w(px(160.))
                             .max_h(px(280.))
                             .overflow_y_scroll()
@@ -376,7 +398,6 @@ impl Render for Select {
             .on_action(cx.listener(Self::on_last))
             .on_action(cx.listener(Self::on_confirm))
             .on_action(cx.listener(Self::on_cancel))
-            .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _window, cx| this.close(cx)))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|this, _, _window, cx| this.close(cx)),
