@@ -136,6 +136,14 @@ fn apply_theme(settings: &Settings, cx: &mut App) {
     cx.refresh_windows();
 }
 
+/// 인라인 메시지가 속한 카드. 슬롯이 하나뿐이면 내보내기 결과가 SSH Config
+/// 카드에 뜨는 식으로 엉뚱한 자리에 표시된다.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MessageSlot {
+    Config,
+    Backup,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PassphraseMode {
     Export,
@@ -150,7 +158,7 @@ pub struct SettingsView {
     accent_input: Entity<TextInput>,
     passphrase: Entity<TextInput>,
     /// 카드 하단 인라인 메시지 (원본과 동일하게 단일 슬롯).
-    message: Option<String>,
+    message: Option<(MessageSlot, String)>,
 
     /// 내보내기 선택 모달 — `Some(encrypted)`.
     export_select: Option<bool>,
@@ -391,13 +399,14 @@ impl SettingsView {
             .state
             .update(cx, |state, cx| state.refresh_from_disk(cx));
         let lang = current_lang(cx);
-        self.message = Some(
+        self.message = Some((
+            MessageSlot::Config,
             tr(
                 lang,
                 if changed { TrKey::SettingsReloadDone } else { TrKey::SettingsReloadNoChange },
             )
             .to_string(),
-        );
+        ));
         cx.notify();
     }
 
@@ -467,7 +476,7 @@ impl SettingsView {
             let result = task.await;
             this.update(cx, |view, cx| {
                 let lang = current_lang(cx);
-                view.message = Some(match result {
+                view.message = Some((MessageSlot::Backup, match result {
                     Ok(()) if encrypted => tr_with(
                         lang,
                         TrKey::SettingsExportEncryptedDone,
@@ -479,7 +488,7 @@ impl SettingsView {
                         TrKey::SettingsExportFail,
                         &[("err", &err.to_string())],
                     ),
-                });
+                }));
                 cx.notify();
             })
             .ok();
@@ -525,7 +534,7 @@ impl SettingsView {
                 let lang = current_lang(cx);
                 match result {
                     Ok(summary) => {
-                        view.message = Some(tr_with(
+                        view.message = Some((MessageSlot::Backup, tr_with(
                             lang,
                             TrKey::SettingsImportDone,
                             &[
@@ -534,7 +543,7 @@ impl SettingsView {
                                 ("ka", &summary.keys_added.to_string()),
                                 ("ks", &summary.keys_skipped.to_string()),
                             ],
-                        ));
+                        )));
                         if let Some(shortcuts) = summary.shortcuts {
                             view.replace_shortcuts(shortcuts, cx);
                         }
@@ -547,11 +556,11 @@ impl SettingsView {
                         view.passphrase_modal = Some((PassphraseMode::Import, retry_path));
                     }
                     Err(err) => {
-                        view.message = Some(tr_with(
+                        view.message = Some((MessageSlot::Backup, tr_with(
                             lang,
                             TrKey::SettingsImportFail,
                             &[("err", &err.to_string())],
-                        ));
+                        )));
                     }
                 }
                 cx.notify();
@@ -613,6 +622,14 @@ impl SettingsView {
     /// 처리하므로(window.rs `dispatch_key_event`), 정작 다시 지정하려는 ⌘T·⌘D
     /// 같은 키는 기존 액션이 먼저 먹어 캡처에 도달하지 못한다.
     /// `intercept_keystrokes`는 그 매칭 앞단에서 가로채므로 어떤 조합이든 받는다.
+    /// 이 카드에 표시할 메시지 (다른 카드의 것이면 None).
+    fn message_for(&self, slot: MessageSlot) -> Option<String> {
+        self.message
+            .as_ref()
+            .filter(|(s, _)| *s == slot)
+            .map(|(_, text)| text.clone())
+    }
+
     fn start_capture(&mut self, action: &'static str, cx: &mut Context<Self>) {
         self.capturing = Some(action.to_string());
         self.conflict = None;
@@ -670,6 +687,19 @@ impl SettingsView {
         self.rebind(cx);
         cx.notify();
     }
+}
+
+/// 카드 하단 인라인 메시지 박스.
+fn message_box(message: String, t: &Theme) -> impl IntoElement {
+    div()
+        .p(px(8.))
+        .rounded(px(6.))
+        .border_1()
+        .border_color(t.border)
+        .bg(t.elevated)
+        .text_size(px(11.))
+        .text_color(t.text)
+        .child(message)
 }
 
 fn home_dir() -> PathBuf {
@@ -801,18 +831,8 @@ impl Render for SettingsView {
                     .on_click(cx.listener(|this, _, _window, cx| this.reload_config(cx))),
                 cx,
             ))
-            .when_some(self.message.clone(), |el, message| {
-                el.child(
-                    div()
-                        .p(px(8.))
-                        .rounded(px(6.))
-                        .border_1()
-                        .border_color(t.border)
-                        .bg(t.elevated)
-                        .text_size(px(11.))
-                        .text_color(t.text)
-                        .child(message),
-                )
+            .when_some(self.message_for(MessageSlot::Config), |el, message| {
+                el.child(message_box(message, &t))
             });
 
         // --- Backup ---
@@ -847,7 +867,11 @@ impl Render for SettingsView {
                 Button::new("import-backup", tr(lang, TrKey::CommonImport))
                     .on_click(cx.listener(|this, _, _window, cx| this.start_import(cx))),
                 cx,
-            ));
+            ))
+            // 내보내기·가져오기 결과는 이 카드에 뜬다.
+            .when_some(self.message_for(MessageSlot::Backup), |el, message| {
+                el.child(message_box(message, &t))
+            });
 
         // --- General ---
         let general_card = self
