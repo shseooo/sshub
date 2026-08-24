@@ -1009,7 +1009,9 @@ impl Render for SettingsView {
             .card(cx)
             .child(self.section("System Info", cx))
             .child(info_line("data", paths.store_file.display().to_string()))
-            .child(info_line("keys", paths.keys_dir.display().to_string()));
+            .child(info_line("keys", paths.keys_dir.display().to_string()))
+            // 설정 화면 가장 아래 — 버전은 문제를 알릴 때 가장 먼저 묻는 값이다.
+            .child(info_line("version", env!("CARGO_PKG_VERSION").to_string()));
 
         let content = div()
             .flex()

@@ -88,7 +88,12 @@ impl Sidebar {
             .when(active, |el| el.bg(t.accent_wash))
             .when(!active, |el| el.hover(move |s| s.bg(t.hover)))
             .when(collapsed, |el| el.justify_center())
-            .child(icon(glyph).color(if active { t.accent } else { t.text_muted }))
+            // 기본 13px은 접힌 사이드바(56px)에서 특히 작아 보인다.
+            .child(
+                icon(glyph)
+                    .size(px(17.))
+                    .color(if active { t.accent } else { t.text_muted }),
+            )
             .when(!collapsed, |el| {
                 el.child(
                     div()
