@@ -160,6 +160,8 @@ pub struct SettingsView {
     passphrase_modal: Option<(PassphraseMode, PathBuf)>,
     /// 리바인딩 대기 중인 액션 이름.
     capturing: Option<String>,
+    /// 캡처 중에만 살아 있는 키 인터셉터. Drop되면 캡처가 끝난다.
+    capture_sub: Option<Subscription>,
     /// 충돌한 상대 액션 (캡처 중 표시).
     conflict: Option<String>,
     _subscriptions: Vec<Subscription>,
@@ -320,6 +322,7 @@ impl SettingsView {
             include_shortcuts: true,
             passphrase_modal: None,
             capturing: None,
+            capture_sub: None,
             conflict: None,
             _subscriptions: subscriptions,
         }
@@ -604,11 +607,39 @@ impl SettingsView {
         keymap::register_all(cx, &shortcuts);
     }
 
+    /// 단축키 캡처 시작.
+    ///
+    /// 키를 `on_key_down`으로 받으면 안 된다 — gpui는 **바인딩을 리스너보다 먼저**
+    /// 처리하므로(window.rs `dispatch_key_event`), 정작 다시 지정하려는 ⌘T·⌘D
+    /// 같은 키는 기존 액션이 먼저 먹어 캡처에 도달하지 못한다.
+    /// `intercept_keystrokes`는 그 매칭 앞단에서 가로채므로 어떤 조합이든 받는다.
+    fn start_capture(&mut self, action: &'static str, cx: &mut Context<Self>) {
+        self.capturing = Some(action.to_string());
+        self.conflict = None;
+        let this = cx.entity().downgrade();
+        self.capture_sub = Some(cx.intercept_keystrokes(move |event, _window, cx| {
+            let keystroke = event.keystroke.clone();
+            // 캡처 중에는 어떤 키도 액션으로 흘리지 않는다.
+            cx.stop_propagation();
+            this.update(cx, |this, cx| {
+                this.capture_keystroke(&keystroke.key.clone(), keystroke.unparse(), cx);
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    /// 캡처 종료 — 인터셉터를 반드시 놓아 준다. 남겨 두면 앱 전체 키가 먹통이 된다.
+    fn end_capture(&mut self) {
+        self.capturing = None;
+        self.conflict = None;
+        self.capture_sub = None;
+    }
+
     fn capture_keystroke(&mut self, key: &str, combo: String, cx: &mut Context<Self>) {
         let Some(action) = self.capturing.clone() else { return };
         if key == "escape" {
-            self.capturing = None;
-            self.conflict = None;
+            self.end_capture();
             cx.notify();
             return;
         }
@@ -635,8 +666,7 @@ impl SettingsView {
                 s.shortcuts.insert(action.clone(), combo.clone());
             }, cx);
         });
-        self.capturing = None;
-        self.conflict = None;
+        self.end_capture();
         self.rebind(cx);
         cx.notify();
     }
@@ -957,8 +987,6 @@ impl Render for SettingsView {
                     .child(
                         div()
                             .id(gpui::SharedString::from(format!("shortcut-{action}")))
-                            .key_context("ShortcutCapture")
-                            .track_focus(&cx.focus_handle())
                             .min_w(px(84.))
                             .px(px(8.))
                             .py(px(4.))
@@ -974,23 +1002,9 @@ impl Render for SettingsView {
                             } else {
                                 keymap::display_combo(&combo)
                             })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.capturing = Some(action.to_string());
-                                this.conflict = None;
-                                window.focus(&cx.focus_handle());
-                                cx.notify();
-                            }))
-                            .on_key_down(cx.listener(
-                                move |this, event: &gpui::KeyDownEvent, _window, cx| {
-                                    if this.capturing.is_none() {
-                                        return;
-                                    }
-                                    cx.stop_propagation();
-                                    let key = event.keystroke.key.clone();
-                                    let combo = event.keystroke.unparse();
-                                    this.capture_keystroke(&key, combo, cx);
-                                },
-                            )),
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.start_capture(action, cx);
+                            })),
                     )
             })
             .collect();
