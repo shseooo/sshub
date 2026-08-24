@@ -94,6 +94,10 @@ pub struct TerminalWorkspace {
     search: HashMap<SessionId, PaneSearch>,
     geometry: GeometryRef,
     rename: Option<(TabId, Entity<TextInput>)>,
+    /// pane 라벨 인라인 편집 (헤더 더블클릭). 탭 이름 편집과 서로 독립이다.
+    pane_rename: Option<(SessionId, Entity<TextInput>)>,
+    /// 드래그가 지나가는 pane과 삽입 방향 — 드롭 미리보기의 유일한 근거.
+    drag_over: Option<(SessionId, DropSide)>,
     confirm: Option<Entity<ConfirmDialog>>,
     divider: Option<DividerGrab>,
     focus_handle: FocusHandle,
@@ -170,6 +174,8 @@ impl TerminalWorkspace {
             search: HashMap::new(),
             geometry: Rc::new(RefCell::new(WorkspaceGeometry::default())),
             rename: None,
+            pane_rename: None,
+            drag_over: None,
             confirm: None,
             divider: None,
             focus_handle: cx.focus_handle(),
@@ -573,9 +579,74 @@ impl TerminalWorkspace {
         cx.notify();
     }
 
+    /// pane 헤더 더블클릭 — 인라인 라벨 편집. 탭 이름 편집과 같은 수명 규칙을
+    /// 쓴다(Submit이면 반영, Blur면 취소).
+    pub fn start_pane_rename(
+        &mut self,
+        session: SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(label) = self
+            .tabs
+            .iter()
+            .flat_map(|tab| leaves(&tab.root))
+            .find(|leaf| leaf.session_id == session)
+            .map(|leaf| leaf.label.clone())
+        else {
+            return;
+        };
+        let input = cx.new(|cx| TextInput::new(window, cx).with_text(label));
+        let editing = session.clone();
+        let sub = cx.subscribe(&input, move |this: &mut Self, input, event, cx| {
+            use crate::ui::InputEvent;
+            match event {
+                InputEvent::Submitted => {
+                    let text = input.read(cx).text().to_string();
+                    this.commit_pane_rename(&editing, &text, cx);
+                }
+                InputEvent::Blurred => {
+                    this.pane_rename = None;
+                    cx.notify();
+                }
+                InputEvent::Changed => {}
+            }
+        });
+        self._subscriptions.push(sub);
+        window.focus(&input.read(cx).focus_handle(cx));
+        self.pane_rename = Some((session, input));
+        cx.notify();
+    }
+
+    fn commit_pane_rename(&mut self, session: &SessionId, text: &str, cx: &mut Context<Self>) {
+        let trimmed = text.trim();
+        // 빈 라벨은 탭 제목(`tab.name ?? 첫 leaf.label`)까지 비워버리므로 무시한다.
+        if !trimmed.is_empty() {
+            self.rename_pane(session, trimmed, cx);
+        }
+        self.pane_rename = None;
+        cx.notify();
+    }
+
     // ---- 드래그 재배치 ------------------------------------------------------
 
+    /// 드래그 호버 갱신. pane은 **자기 자신에 대해서만** 보고하므로, 이탈
+    /// 보고는 현재 하이라이트가 그 pane일 때만 지운다 — 그래야 리스너 호출
+    /// 순서(들어온 pane이 먼저인지 나간 pane이 먼저인지)와 무관하게 안정적이다.
+    fn set_drag_over(&mut self, session: SessionId, side: Option<DropSide>, cx: &mut Context<Self>) {
+        let next = match side {
+            Some(side) => Some((session, side)),
+            None if self.drag_over.as_ref().is_some_and(|(id, _)| *id == session) => None,
+            None => return,
+        };
+        if self.drag_over != next {
+            self.drag_over = next;
+            cx.notify();
+        }
+    }
+
     fn reorder_or_detach_on_tab_bar(&mut self, boundary: usize, drag: Option<TabDrag>, pane: Option<PaneDrag>, window: &mut Window, cx: &mut Context<Self>) {
+        self.drag_over = None;
         if let Some(TabDrag { tab_id }) = drag {
             self.tabs = reorder_tabs(std::mem::take(&mut self.tabs), &tab_id, boundary);
         } else if let Some(PaneDrag { tab_id, session_id }) = pane {
@@ -599,6 +670,9 @@ impl TerminalWorkspace {
 
     fn drop_on_pane(&mut self, target: SessionId, drag: Option<TabDrag>, pane: Option<PaneDrag>, window: &mut Window, cx: &mut Context<Self>) {
         let side = self.side_for(&target, window);
+        // 미리보기는 여기서 소임을 다한다 — 다음 드래그가 첫 이동 이벤트를
+        // 받기 전에 옛 하이라이트가 깜빡이지 않도록 즉시 지운다.
+        self.drag_over = None;
         let Some(dst_tab) = self.tab_of_pane(&target) else {
             return;
         };
@@ -1018,9 +1092,11 @@ impl TerminalWorkspace {
 
     fn pane_handlers(&self, cx: &mut Context<Self>) -> Rc<PaneHandlers> {
         let focus_this = cx.entity().downgrade();
+        let rename_this = cx.entity().downgrade();
         let divider_this = cx.entity().downgrade();
         let drop_pane_this = cx.entity().downgrade();
         let drop_tab_this = cx.entity().downgrade();
+        let drag_over_this = cx.entity().downgrade();
         let labels: HashMap<SessionId, SharedString> = self
             .tabs
             .iter()
@@ -1036,6 +1112,11 @@ impl TerminalWorkspace {
             focus: Box::new(move |session, window, cx| {
                 focus_this
                     .update(cx, |this, cx| this.focus_pane(session, window, cx))
+                    .ok();
+            }),
+            rename: Box::new(move |session, window, cx| {
+                rename_this
+                    .update(cx, |this, cx| this.start_pane_rename(session, window, cx))
                     .ok();
             }),
             divider_down: Box::new(move |grab, _window, cx| {
@@ -1058,6 +1139,11 @@ impl TerminalWorkspace {
                     .update(cx, |this, cx| {
                         this.drop_on_pane(target, Some(drag), None, window, cx)
                     })
+                    .ok();
+            }),
+            drag_over: Box::new(move |session, side, _window, cx| {
+                drag_over_this
+                    .update(cx, |this, cx| this.set_drag_over(session, side, cx))
                     .ok();
             }),
             drag_label: Box::new(move |session| {
@@ -1160,6 +1246,10 @@ impl Render for TerminalWorkspace {
             theme: &theme,
         });
 
+        // 드래그가 끝났는데(취소·창 밖 드롭) 마지막 호버가 남아 있을 수 있다.
+        // 활성 드래그가 없으면 미리보기는 무조건 그리지 않는다.
+        let drag_over = self.drag_over.clone().filter(|_| cx.has_active_drag());
+
         let body = match active {
             Some(index) => {
                 let tab = &self.tabs[index];
@@ -1173,6 +1263,9 @@ impl Render for TerminalWorkspace {
                         geometry: self.geometry.clone(),
                         handlers: pane_handlers,
                         theme: &theme,
+                        leaf_count: leaves(&tab.root).len(),
+                        drag_over,
+                        renaming: self.pane_rename.as_ref().map(|(id, input)| (id, input)),
                         missing_notice: SharedString::from(tr(self.lang, TrKey::TermClosedNotice)),
                     },
                 )

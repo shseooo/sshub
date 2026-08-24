@@ -12,19 +12,25 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui::{
-    canvas, div, px, AnyElement, App, AppContext as _, Bounds, CursorStyle, Div, Entity, InteractiveElement,
-    IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, SharedString,
-    StatefulInteractiveElement, Styled, Window,
+    canvas, div, point, px, relative, size, AnyElement, App, AppContext as _, Bounds, CursorStyle, Div, Entity,
+    InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, SharedString,
+    Stateful, StatefulInteractiveElement, Styled, Window,
 };
 use sshub_splits::{DropSide, PaneNode, SessionId, SplitDirection, SplitId, TabId, TerminalLeaf};
 
 use crate::terminal_view::TerminalView;
-use crate::theme::Theme;
+use crate::theme::{with_alpha, Theme};
+use crate::ui::TextInput;
 
 /// 자식 pane의 최소 비율 — 이 아래로는 드래그해도 줄지 않는다.
 pub const MIN_PANE_PERCENT: f32 = 5.0;
 /// 디바이더 히트박스 두께.
 pub const DIVIDER_PX: f32 = 5.0;
+/// pane 헤더 높이 — 원본 Electron `TerminalHost`의 `h-6`(24px)와 같다.
+pub const PANE_HEADER_PX: f32 = 24.0;
+/// 드롭 미리보기 오버레이의 불투명도 — 아래 터미널 내용이 비쳐야 어디에
+/// 꽂히는지 판단할 수 있다.
+const DROP_OVERLAY_ALPHA: f32 = 0.16;
 
 /// 프레임마다 갱신되는 화면 기하 — 방향 포커스 이동·드롭 위치 판정·디바이더
 /// 드래그의 기준 길이가 전부 여기서 나온다.
@@ -83,6 +89,12 @@ pub struct PaneTreeCtx<'a> {
     pub geometry: GeometryRef,
     pub handlers: Rc<PaneHandlers>,
     pub theme: &'a Theme,
+    /// 이 탭의 leaf 수 — 헤더 표시 여부의 유일한 근거([`pane_header_visible`]).
+    pub leaf_count: usize,
+    /// 드래그가 올라와 있는 pane과 그때의 삽입 방향 (드롭 미리보기).
+    pub drag_over: Option<(SessionId, DropSide)>,
+    /// 라벨을 편집 중인 pane과 그 입력 위젯 (탭바의 인라인 rename과 같은 방식).
+    pub renaming: Option<(&'a SessionId, &'a Entity<TextInput>)>,
     /// 세션이 아직/더는 없을 때 보여줄 안내 (i18n `term.closedNotice`).
     pub missing_notice: SharedString,
 }
@@ -94,12 +106,18 @@ pub type DividerCallback = Box<dyn Fn(DividerGrab, &mut Window, &mut App)>;
 pub type PaneDropCallback = Box<dyn Fn(PaneDrag, SessionId, &mut Window, &mut App)>;
 pub type TabDropCallback = Box<dyn Fn(TabDrag, SessionId, &mut Window, &mut App)>;
 pub type PaneLabelFn = Box<dyn Fn(&SessionId) -> SharedString>;
+/// 드래그 호버 보고. `Some(side)`는 진입/이동, `None`은 그 pane에서 벗어남이다.
+/// pane별로 자기 자신에 대해서만 보고하므로 리스너 호출 순서에 의존하지 않는다.
+pub type DragOverCallback = Box<dyn Fn(SessionId, Option<DropSide>, &mut Window, &mut App)>;
 
 pub struct PaneHandlers {
     pub focus: PaneCallback,
+    /// 헤더 더블클릭 — 인라인 라벨 변경 시작.
+    pub rename: PaneCallback,
     pub divider_down: DividerCallback,
     pub drop_pane: PaneDropCallback,
     pub drop_tab: TabDropCallback,
+    pub drag_over: DragOverCallback,
     pub drag_label: PaneLabelFn,
 }
 
@@ -161,6 +179,28 @@ pub fn drop_side(bounds: Bounds<Pixels>, at: Point<Pixels>) -> DropSide {
         DropSide::Top
     } else {
         DropSide::Bottom
+    }
+}
+
+/// pane 헤더를 그릴지 — 분할되지 않은 탭에서는 터미널 위 24px을 쓰지 않는다
+/// (원본 Electron `showHeader = leaves(tab.root).length > 1`과 동일 규칙).
+pub fn pane_header_visible(leaf_count: usize) -> bool {
+    leaf_count > 1
+}
+
+/// 드롭 미리보기가 덮을 사각형 — `side` 쪽 **절반**이다.
+///
+/// 실제 렌더는 `relative(0.5)` CSS로 같은 모양을 그리므로, 이 함수는 그
+/// 기하 계약을 테스트로 고정해 두는 자리다(어느 한쪽만 바뀌면 테스트가 깨진다).
+pub fn drop_overlay(bounds: Bounds<Pixels>, side: DropSide) -> Bounds<Pixels> {
+    let (x, y) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+    let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+    let (half_w, half_h) = (w / 2.0, h / 2.0);
+    match side {
+        DropSide::Left => Bounds::new(point(px(x), px(y)), size(px(half_w), px(h))),
+        DropSide::Right => Bounds::new(point(px(x + half_w), px(y)), size(px(half_w), px(h))),
+        DropSide::Top => Bounds::new(point(px(x), px(y)), size(px(w), px(half_h))),
+        DropSide::Bottom => Bounds::new(point(px(x), px(y + half_h)), size(px(w), px(half_h))),
     }
 }
 
@@ -388,7 +428,10 @@ fn render_leaf(leaf: &TerminalLeaf, ctx: &PaneTreeCtx<'_>) -> AnyElement {
     let drop_tab_handlers = ctx.handlers.clone();
     let pane_target = session_id.clone();
     let tab_target = session_id.clone();
-    let grip_label = (ctx.handlers.drag_label)(&session_id);
+    let over_pane_handlers = ctx.handlers.clone();
+    let over_pane_id = session_id.clone();
+    let over_tab_handlers = ctx.handlers.clone();
+    let over_tab_id = session_id.clone();
 
     let mut container = div()
         .id(element_id("pane", session_id.as_str()))
@@ -399,14 +442,41 @@ fn render_leaf(leaf: &TerminalLeaf, ctx: &PaneTreeCtx<'_>) -> AnyElement {
         .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
             (handlers.focus)(focus_id.clone(), window, cx);
         })
+        // 드래그 중 포인터 위치는 `on_drag_move`로만 알 수 있다(`drag_over`는
+        // 요소 전체 스타일만 바꿔 어느 쪽 절반인지 표현하지 못한다).
+        .on_drag_move::<PaneDrag>(move |event, window, cx| {
+            report_drag_over(&over_pane_handlers, &over_pane_id, event.bounds, event.event.position, window, cx);
+        })
+        .on_drag_move::<TabDrag>(move |event, window, cx| {
+            report_drag_over(&over_tab_handlers, &over_tab_id, event.bounds, event.event.position, window, cx);
+        })
         .on_drop::<PaneDrag>(move |drag, window, cx| {
             (drop_pane_handlers.drop_pane)(drag.clone(), pane_target.clone(), window, cx);
         })
         .on_drop::<TabDrag>(move |drag, window, cx| {
             (drop_tab_handlers.drop_tab)(drag.clone(), tab_target.clone(), window, cx);
         })
-        .child(record)
-        .child(body);
+        .child(record);
+
+    // 분할된 탭에서만 헤더를 얹는다 — 단일 pane에서는 터미널이 전체를 쓴다.
+    container = if pane_header_visible(ctx.leaf_count) {
+        // basis 0으로 고정해야 터미널의 내용 크기가 레이아웃에 끼어들어
+        // 헤더를 밀어내지 못한다(split의 region과 같은 이유).
+        let mut rest = div().overflow_hidden();
+        rest.style().flex_grow = Some(1.0);
+        rest.style().flex_shrink = Some(1.0);
+        rest.style().flex_basis = Some(px(0.0).into());
+        container.child(
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(render_pane_header(leaf, ctx, focused))
+                .child(rest.child(body)),
+        )
+    } else {
+        container.child(body)
+    };
 
     // 브로드캐스트 표시: 내용 위에 2px 어센트 내부 보더 (§6). 리스너가 없는
     // 순수 페인트 레이어라 터미널 마우스 입력을 가리지 않는다.
@@ -420,33 +490,106 @@ fn render_leaf(leaf: &TerminalLeaf, ctx: &PaneTreeCtx<'_>) -> AnyElement {
         );
     }
 
-    // pane 드래그 손잡이 — pane 자체를 드래그 소스로 만들면 터미널 선택과
-    // 충돌하므로 우상단 그립에서만 시작한다.
+    // 드롭 미리보기 — 실제로 꽂힐 절반을 어센트 워시 + 2px 모서리 선으로 덮는다.
+    if let Some((_, side)) = ctx.drag_over.as_ref().filter(|(id, _)| *id == session_id) {
+        container = container.child(drop_overlay_element(*side, theme));
+    }
+
+    container.into_any_element()
+}
+
+/// pane 헤더 — 라벨 + 드래그 손잡이. 바 전체가 드래그 소스다(원본 Electron의
+/// `draggable` 헤더). 터미널 본문을 드래그 소스로 만들면 텍스트 선택과 충돌한다.
+fn render_pane_header(leaf: &TerminalLeaf, ctx: &PaneTreeCtx<'_>, focused: bool) -> Stateful<Div> {
+    let theme = ctx.theme;
+    let session_id = leaf.session_id.clone();
+    let label = (ctx.handlers.drag_label)(&session_id);
+
+    let renaming = ctx
+        .renaming
+        .filter(|(id, _)| *id == &session_id)
+        .map(|(_, input)| input.clone());
+
+    let title: AnyElement = match renaming {
+        Some(input) => div().w(px(140.0)).flex_shrink_0().child(input).into_any_element(),
+        None => div()
+            .flex_grow()
+            .overflow_hidden()
+            .text_xs()
+            .text_color(if focused { theme.text } else { theme.text_muted })
+            .child(label.clone())
+            .into_any_element(),
+    };
+
+    let click_handlers = ctx.handlers.clone();
+    let click_id = session_id.clone();
+    let ghost = label.clone();
     let drag_payload = PaneDrag {
         tab_id: ctx.tab_id.clone(),
         session_id: session_id.clone(),
     };
-    container.child(
-        div()
-            .id(element_id("grip", session_id.as_str()))
-            .absolute()
-            .top_0()
-            .right_0()
-            .w(px(14.0))
-            .h(px(14.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_xs()
-            .text_color(theme.text_disabled)
-            .cursor(CursorStyle::OpenHand)
-            .child("⠿")
-            .on_drag(drag_payload, move |_payload, _offset, _window, cx| {
-                let label = grip_label.clone();
-                cx.new(|_| DragGhost { label })
-            }),
-    )
-    .into_any_element()
+
+    div()
+        .id(element_id("pane-header", session_id.as_str()))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .flex_shrink_0()
+        .h(px(PANE_HEADER_PX))
+        .w_full()
+        .px_2()
+        .bg(if focused { theme.selected } else { theme.surface })
+        .border_b_1()
+        .border_color(if focused { theme.accent } else { theme.border_subtle })
+        .cursor(CursorStyle::OpenHand)
+        .child(title)
+        .child(div().flex_shrink_0().text_xs().text_color(theme.text_disabled).child("⠿"))
+        .on_mouse_down(
+            MouseButton::Left,
+            move |event: &MouseDownEvent, window, cx| {
+                if event.click_count >= 2 {
+                    // 상위 컨테이너의 focus 핸들러가 이어 돌면 방금 띄운 입력에서
+                    // 포커스를 뺏어가 편집이 즉시 취소된다.
+                    cx.stop_propagation();
+                    (click_handlers.rename)(click_id.clone(), window, cx);
+                } else {
+                    (click_handlers.focus)(click_id.clone(), window, cx);
+                }
+            },
+        )
+        .on_drag(drag_payload, move |_payload, _offset, _window, cx| {
+            let label = ghost.clone();
+            cx.new(|_| DragGhost { label })
+        })
+}
+
+/// [`drop_overlay`]와 같은 절반을 CSS(`relative(0.5)`)로 그린다.
+fn drop_overlay_element(side: DropSide, theme: &Theme) -> Div {
+    let base = div()
+        .absolute()
+        .bg(with_alpha(theme.accent, DROP_OVERLAY_ALPHA))
+        .border_color(theme.accent);
+    match side {
+        DropSide::Left => base.top_0().left_0().h_full().w(relative(0.5)).border_l_2(),
+        DropSide::Right => base.top_0().right_0().h_full().w(relative(0.5)).border_r_2(),
+        DropSide::Top => base.top_0().left_0().w_full().h(relative(0.5)).border_t_2(),
+        DropSide::Bottom => base.bottom_0().left_0().w_full().h(relative(0.5)).border_b_2(),
+    }
+}
+
+/// `on_drag_move`는 요소 밖의 이동까지 전부 받으므로(gpui가 등록한 전역 mouse
+/// move 리스너다) 여기서 bounds로 직접 걸러야 한다.
+fn report_drag_over(
+    handlers: &Rc<PaneHandlers>,
+    session: &SessionId,
+    bounds: Bounds<Pixels>,
+    at: Point<Pixels>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let side = bounds.contains(&at).then(|| drop_side(bounds, at));
+    (handlers.drag_over)(session.clone(), side, window, cx);
 }
 
 pub(crate) fn element_id(prefix: &str, id: &str) -> gpui::ElementId {
@@ -564,5 +707,80 @@ mod tests {
         assert_eq!(drop_side(b, point(px(100.0), px(95.0))), DropSide::Bottom);
         // 가로로 긴 pane이라도 위/아래 가장자리는 정규화 덕분에 잡힌다.
         assert_eq!(drop_side(b, point(px(120.0), px(2.0))), DropSide::Top);
+    }
+
+    /// 포인터 한 점 → (어느 pane, 어느 절반). 드롭 미리보기가 판단하는 것과
+    /// 같은 경로다: 포함하는 pane을 찾고 그 안에서 `drop_side`를 적용한다.
+    fn pane_at(
+        panes: &[(SessionId, Bounds<Pixels>)],
+        at: Point<Pixels>,
+    ) -> Option<(SessionId, DropSide)> {
+        panes
+            .iter()
+            .find(|(_, b)| b.contains(&at))
+            .map(|(id, b)| (id.clone(), drop_side(*b, at)))
+    }
+
+    #[test]
+    fn pointer_maps_to_the_pane_under_it_and_the_nearer_half() {
+        let panes = grid();
+        // 왼쪽 위 pane의 오른쪽 가장자리 → a의 Right.
+        assert_eq!(
+            pane_at(&panes, point(px(95.0), px(50.0))),
+            Some((SessionId::new("a"), DropSide::Right))
+        );
+        // 같은 x라도 아래 행이면 c가 잡힌다.
+        assert_eq!(
+            pane_at(&panes, point(px(95.0), px(150.0))),
+            Some((SessionId::new("c"), DropSide::Right))
+        );
+        // 오른쪽 아래 pane의 위쪽 가장자리 → d의 Top.
+        assert_eq!(
+            pane_at(&panes, point(px(155.0), px(110.0))),
+            Some((SessionId::new("d"), DropSide::Top))
+        );
+        // 디바이더 틈(101..105)은 어느 pane에도 속하지 않는다 — 미리보기 없음.
+        assert_eq!(pane_at(&panes, point(px(102.0), px(50.0))), None);
+    }
+
+    #[test]
+    fn the_header_only_appears_once_a_tab_is_split() {
+        assert!(!pane_header_visible(0), "빈 탭");
+        assert!(!pane_header_visible(1), "단일 pane — 터미널이 전체를 쓴다");
+        assert!(pane_header_visible(2));
+        assert!(pane_header_visible(9));
+    }
+
+    #[test]
+    fn drop_overlay_covers_exactly_the_matching_half() {
+        let b = bounds(10.0, 20.0, 200.0, 100.0);
+        assert_eq!(drop_overlay(b, DropSide::Left), bounds(10.0, 20.0, 100.0, 100.0));
+        assert_eq!(drop_overlay(b, DropSide::Right), bounds(110.0, 20.0, 100.0, 100.0));
+        assert_eq!(drop_overlay(b, DropSide::Top), bounds(10.0, 20.0, 200.0, 50.0));
+        assert_eq!(drop_overlay(b, DropSide::Bottom), bounds(10.0, 70.0, 200.0, 50.0));
+
+        // 각 절반은 원본의 정확히 절반이고, 마주보는 쌍은 원본을 빈틈없이 채운다.
+        for side in [DropSide::Left, DropSide::Right, DropSide::Top, DropSide::Bottom] {
+            let half = drop_overlay(b, side);
+            let area = f32::from(half.size.width) * f32::from(half.size.height);
+            assert!((area - 200.0 * 100.0 / 2.0).abs() < 0.001, "{side:?}");
+            assert!(b.contains(&half.origin), "{side:?} 오버레이는 pane 안에서 시작한다");
+        }
+        assert_eq!(
+            f32::from(drop_overlay(b, DropSide::Left).size.width)
+                + f32::from(drop_overlay(b, DropSide::Right).size.width),
+            f32::from(b.size.width)
+        );
+    }
+
+    /// 미리보기가 가리키는 절반과 실제 삽입 방향이 같은 축을 쓰는지 —
+    /// 둘이 어긋나면 "왼쪽에 하이라이트, 오른쪽에 삽입" 같은 거짓말이 된다.
+    #[test]
+    fn the_previewed_half_agrees_with_the_insert_axis() {
+        let b = bounds(0.0, 0.0, 200.0, 100.0);
+        let left = drop_overlay(b, drop_side(b, point(px(5.0), px(50.0))));
+        assert_eq!(left.origin.x, b.origin.x, "왼쪽 절반은 왼쪽 모서리에 붙는다");
+        let bottom = drop_overlay(b, drop_side(b, point(px(100.0), px(98.0))));
+        assert_eq!(bottom.origin.y, px(50.0), "아래쪽 절반은 중앙에서 시작한다");
     }
 }
