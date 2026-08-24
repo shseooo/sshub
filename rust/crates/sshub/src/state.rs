@@ -48,7 +48,14 @@ impl Global for AppStateHandle {}
 
 /// 전역 상태 초기화 — 앱 부트스트랩에서 1회.
 pub fn init(cx: &mut App) -> Entity<AppState> {
-    let state = cx.new(AppState::new);
+    let paths = AppPaths::discover().expect("데이터 디렉터리를 찾을 수 없습니다");
+    init_with_paths(paths, cx)
+}
+
+/// 경로를 지정해 초기화한다. 테스트는 반드시 이쪽을 써서 임시 디렉터리를
+/// 넘긴다 — 기본 경로를 쓰면 사용자의 실제 서버·키·레이아웃 파일을 건드린다.
+pub fn init_with_paths(paths: AppPaths, cx: &mut App) -> Entity<AppState> {
+    let state = cx.new(|_| AppState::new(paths));
     cx.set_global(AppStateHandle(state.clone()));
     state
 }
@@ -59,8 +66,7 @@ pub fn app_state(cx: &App) -> Entity<AppState> {
 }
 
 impl AppState {
-    fn new(_cx: &mut Context<Self>) -> Self {
-        let paths = AppPaths::discover().expect("데이터 디렉터리를 찾을 수 없습니다");
+    fn new(paths: AppPaths) -> Self {
         let mut store = Store::new(paths.store_file.clone());
         store.load();
         let settings = Settings::load(&paths.settings_file);

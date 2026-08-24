@@ -178,7 +178,11 @@ pub fn build_batches(cells: &[IndexedCell]) -> Vec<CellBatch> {
         let contiguous = line == current_line && col == expected_col;
         let same_style = current.as_ref().map(|(k, _)| *k == key).unwrap_or(false);
 
-        if blank || !contiguous || !same_style {
+        // 와이드 문자는 절대 이어 붙이지 않는다. 폰트가 셀 격자를 모르기 때문에
+        // (한글은 폴백 폰트로 그려지고 그 advance는 2셀 폭과 다르다) 여러 글자를
+        // 한 배치로 묶으면 두 번째 글자부터 자기 셀에서 어긋나고, 결국 커서·선택·
+        // 배경만 격자에 남아 텍스트가 왼쪽으로 밀려 보인다.
+        if blank || !contiguous || !same_style || wide {
             if let Some((_, batch)) = current.take() {
                 out.push(batch);
             }
@@ -218,6 +222,13 @@ pub fn build_batches(cells: &[IndexedCell]) -> Vec<CellBatch> {
         }
         current_line = line;
         expected_col = col + if wide { 2 } else { 1 };
+
+        // 와이드 글자는 한 글자짜리 배치로 바로 내보낸다 — 각자 자기 열에 그려진다.
+        if wide {
+            if let Some((_, batch)) = current.take() {
+                out.push(batch);
+            }
+        }
     }
 
     if let Some((_, batch)) = current.take() {
@@ -1017,11 +1028,17 @@ mod tests {
         let batches = build_batches(&cells);
         let summary: Vec<(usize, &str)> =
             batches.iter().map(|b| (b.start_col, b.text.as_str())).collect();
-        assert_eq!(summary, vec![(0, "가나다"), (7, "abc"), (11, "漢字")]);
+        // 와이드 글자는 **한 글자씩** 자기 열에 그려져야 한다. 묶어서 그리면
+        // 폴백 폰트의 advance(2셀보다 좁다)로 이어져 두 번째 글자부터 왼쪽으로
+        // 밀리고, 격자를 지키는 커서·선택과 어긋난다.
+        assert_eq!(
+            summary,
+            vec![(0, "가"), (2, "나"), (4, "다"), (7, "abc"), (11, "漢"), (13, "字")]
+        );
         // 와이드/내로우 배치가 섞이지 않는다
         assert!(batches[0].wide);
-        assert!(!batches[1].wide);
-        assert!(batches[2].wide);
+        assert!(!batches[3].wide);
+        assert!(batches[4].wide);
     }
 
     #[test]

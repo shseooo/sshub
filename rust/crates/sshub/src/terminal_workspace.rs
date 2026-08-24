@@ -1203,6 +1203,20 @@ impl TerminalWorkspace {
         })
     }
 
+    /// 마지막 렌더에서 각 pane이 차지한 영역 (좌→우, 위→아래 순).
+    /// 분할이 화면까지 반영됐는지 검증하는 데 쓴다.
+    pub fn pane_bounds(&self) -> Vec<(SessionId, Bounds<Pixels>)> {
+        let geometry = self.geometry.borrow();
+        let mut panes: Vec<(SessionId, Bounds<Pixels>)> =
+            geometry.panes.iter().map(|(id, b)| (id.clone(), *b)).collect();
+        panes.sort_by(|(_, a), (_, b)| {
+            (a.origin.y, a.origin.x)
+                .partial_cmp(&(b.origin.y, b.origin.x))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        panes
+    }
+
     /// 탭바 위 드롭 지점 → 삽입 경계. 기하는 현재 탭 순서대로 정렬해서 쓴다
     /// (geometry 맵의 순서는 페인트 순서라 신뢰하지 않는다).
     fn tab_bar_boundary(&self, window: &mut Window) -> usize {
