@@ -179,25 +179,38 @@ impl TerminalView {
             match keystroke.key.as_str() {
                 "c" => {
                     self.copy(cx);
-                    return;
+                    cx.stop_propagation();
                 }
                 "v" => {
                     self.paste(cx);
-                    return;
+                    cx.stop_propagation();
                 }
                 "a" => {
                     self.terminal.update(cx, |terminal, _| terminal.select_all());
+                    cx.stop_propagation();
                     cx.notify();
-                    return;
                 }
-                _ => return,
+                // 나머지 cmd 조합은 앱 단축키 — 키맵이 가져가도록 흘려보낸다.
+                _ => {}
             }
+            return;
+        }
+
+        // 평범한 문자 입력은 IME에 양보한다. macOS gpui는 출력 가능한 키를
+        // **IME보다 먼저** 이 핸들러로 보내고, 우리가 소비하면(propagate=false)
+        // IME에 아예 전달하지 않는다. 여기서 가로채면 한글 조합이 시작조차 못
+        // 하고 원시 키('ㅎ' 자리의 'g')가 셸로 들어간다. 확정된 글자는
+        // `replace_text_in_range`로 되돌아온다.
+        if is_text_input(keystroke) {
+            return;
         }
 
         let handled = self
             .terminal
             .update(cx, |terminal, _| terminal.try_keystroke(keystroke, true));
         if handled {
+            // 소비했음을 알려야 gpui가 같은 키를 IME로 다시 넘기지 않는다.
+            cx.stop_propagation();
             self.emit_broadcast(BroadcastInput::Keystroke(keystroke.clone()), cx);
             cx.notify();
         }
@@ -388,6 +401,25 @@ impl EntityInputHandler for TerminalView {
     }
 }
 
+/// IME가 처리해야 할 "평범한 문자 입력"인가.
+///
+/// 수식키가 붙은 키는 터미널이 제어 시퀀스로 직접 매핑해야 하고(ctrl-c 등),
+/// enter·tab·escape·backspace는 `key_char`가 있어도 터미널 규약이 따로 있다
+/// (enter는 LF가 아니라 CR). 그 외 `key_char`가 있는 키만 IME에 넘긴다.
+pub fn is_text_input(keystroke: &Keystroke) -> bool {
+    let mods = &keystroke.modifiers;
+    if mods.control || mods.alt || mods.function || mods.platform {
+        return false;
+    }
+    if matches!(
+        keystroke.key.as_str(),
+        "enter" | "tab" | "escape" | "backspace" | "delete"
+    ) {
+        return false;
+    }
+    keystroke.key_char.as_deref().is_some_and(|c| !c.is_empty())
+}
+
 /// 폰트 크기에서 줄 높이 (엘리먼트와 같은 규칙).
 pub fn line_height_for(font_size: f32) -> f32 {
     font_size * LINE_HEIGHT_RATIO
@@ -396,6 +428,49 @@ pub fn line_height_for(font_size: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ks(source: &str) -> Keystroke {
+        Keystroke::parse(source).unwrap()
+    }
+
+    /// `key_char`는 플랫폼이 채워 주는 값 — 테스트에서는 흉내 낸다.
+    fn typed(source: &str, ch: &str) -> Keystroke {
+        let mut k = ks(source);
+        k.key_char = Some(ch.to_string());
+        k
+    }
+
+    #[test]
+    fn plain_characters_are_left_to_the_ime() {
+        // 한글 조합의 출발점 — 여기서 가로채면 IME가 시작조차 못 한다.
+        assert!(is_text_input(&typed("g", "g")));
+        assert!(is_text_input(&typed("shift-a", "A")));
+        assert!(is_text_input(&typed("1", "1")));
+        assert!(is_text_input(&typed("space", " ")));
+    }
+
+    #[test]
+    fn control_sequences_stay_with_the_terminal() {
+        // 터미널 규약이 따로 있는 키들 — IME에 넘기면 CR 대신 LF가 가는 식으로 깨진다.
+        for key in ["enter", "tab", "escape", "backspace", "delete"] {
+            assert!(!is_text_input(&typed(key, "\n")), "{key}");
+        }
+        assert!(!is_text_input(&ks("ctrl-c")));
+        assert!(!is_text_input(&ks("alt-b")));
+        assert!(!is_text_input(&ks("cmd-c")));
+        assert!(!is_text_input(&ks("up")), "화살표는 key_char가 없다");
+    }
+
+    #[test]
+    fn keys_without_a_character_are_not_text() {
+        let mut k = ks("f5");
+        k.key_char = None;
+        assert!(!is_text_input(&k));
+
+        let mut empty = ks("g");
+        empty.key_char = Some(String::new());
+        assert!(!is_text_input(&empty));
+    }
 
     #[test]
     fn tilde_expands_to_home() {
