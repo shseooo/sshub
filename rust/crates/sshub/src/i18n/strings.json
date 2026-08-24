@@ -1,0 +1,1007 @@
+{
+  "nav.dashboard": {
+    "en": "Dashboard",
+    "ko": "대시보드",
+    "ja": "ダッシュボード"
+  },
+  "nav.servers": {
+    "en": "Servers",
+    "ko": "서버 목록",
+    "ja": "サーバー一覧"
+  },
+  "nav.terminal": {
+    "en": "Terminal",
+    "ko": "터미널",
+    "ja": "ターミナル"
+  },
+  "nav.keys": {
+    "en": "SSH Keys",
+    "ko": "SSH 키 관리",
+    "ja": "SSHキー管理"
+  },
+  "nav.settings": {
+    "en": "Settings",
+    "ko": "설정",
+    "ja": "設定"
+  },
+  "sidebar.collapse": {
+    "en": "Collapse sidebar",
+    "ko": "사이드바 접기",
+    "ja": "サイドバーを折りたたむ"
+  },
+  "sidebar.expand": {
+    "en": "Expand sidebar",
+    "ko": "사이드바 펼치기",
+    "ja": "サイドバーを展開"
+  },
+  "common.addServer": {
+    "en": "Add Server",
+    "ko": "서버 추가",
+    "ja": "サーバー追加"
+  },
+  "common.cancel": {
+    "en": "Cancel",
+    "ko": "취소",
+    "ja": "キャンセル"
+  },
+  "common.save": {
+    "en": "Save",
+    "ko": "저장",
+    "ja": "保存"
+  },
+  "common.saving": {
+    "en": "Saving...",
+    "ko": "저장 중...",
+    "ja": "保存中..."
+  },
+  "common.loading": {
+    "en": "Loading...",
+    "ko": "로딩 중...",
+    "ja": "読み込み中..."
+  },
+  "common.connect": {
+    "en": "Connect",
+    "ko": "연결",
+    "ja": "接続"
+  },
+  "common.edit": {
+    "en": "Edit",
+    "ko": "편집",
+    "ja": "編集"
+  },
+  "common.delete": {
+    "en": "Delete",
+    "ko": "삭제",
+    "ja": "削除"
+  },
+  "common.favorite": {
+    "en": "Favorite",
+    "ko": "즐겨찾기",
+    "ja": "お気に入り"
+  },
+  "common.import": {
+    "en": "Import",
+    "ko": "가져오기",
+    "ja": "インポート"
+  },
+  "common.importing": {
+    "en": "Importing...",
+    "ko": "가져오는 중...",
+    "ja": "インポート中..."
+  },
+  "common.export": {
+    "en": "Export",
+    "ko": "내보내기",
+    "ja": "エクスポート"
+  },
+  "common.confirm": {
+    "en": "Confirm",
+    "ko": "확인",
+    "ja": "確認"
+  },
+  "error.title": {
+    "en": "Something went wrong",
+    "ko": "문제가 발생했습니다",
+    "ja": "問題が発生しました"
+  },
+  "error.message": {
+    "en": "The screen failed to render. Your terminal sessions are still running. Reload to recover.",
+    "ko": "화면을 그리지 못했습니다. 터미널 세션은 그대로 유지되고 있습니다. 다시 불러오면 복구됩니다.",
+    "ja": "画面の描画に失敗しました。ターミナルのセッションは維持されています。再読み込みで復帰できます。"
+  },
+  "error.reload": {
+    "en": "Reload",
+    "ko": "다시 불러오기",
+    "ja": "再読み込み"
+  },
+  "dashboard.newServer": {
+    "en": "New Server",
+    "ko": "새 서버",
+    "ja": "新規サーバー"
+  },
+  "dashboard.emptyHint": {
+    "en": "Add a server, or import ~/.ssh/config from Settings.",
+    "ko": "서버를 추가하거나 설정에서 ~/.ssh/config를 가져오세요.",
+    "ja": "サーバーを追加するか、設定から ~/.ssh/config を取り込んでください。"
+  },
+  "dashboard.addServerCta": {
+    "en": "Add a server",
+    "ko": "서버 추가하기",
+    "ja": "サーバーを追加"
+  },
+  "list.subtitle": {
+    "en": "~/servers · {n} registered",
+    "ko": "~/servers · {n}개 등록됨",
+    "ja": "~/servers · {n} 件登録"
+  },
+  "list.allGroups": {
+    "en": "All groups",
+    "ko": "모든 그룹",
+    "ja": "すべてのグループ"
+  },
+  "list.emptyHintNoServers": {
+    "en": "Add a server, or import ~/.ssh/config from Settings.",
+    "ko": "서버를 추가하거나 설정에서 ~/.ssh/config를 가져오세요.",
+    "ja": "サーバーを追加するか、設定から ~/.ssh/config を取り込んでください。"
+  },
+  "list.emptyHintNoMatch": {
+    "en": "Try a different search term.",
+    "ko": "다른 검색어를 입력해 보세요.",
+    "ja": "別のキーワードで検索してください。"
+  },
+  "list.confirmDelete": {
+    "en": "Delete this server?",
+    "ko": "정말 이 서버를 삭제하시겠습니까?",
+    "ja": "このサーバーを削除しますか？"
+  },
+  "list.confirmDeleteTitle": {
+    "en": "Delete server",
+    "ko": "서버 삭제",
+    "ja": "サーバー削除"
+  },
+  "list.readOnly": {
+    "en": "Read-only",
+    "ko": "읽기 전용",
+    "ja": "読み取り専用"
+  },
+  "edit.name": {
+    "en": "Name",
+    "ko": "이름",
+    "ja": "名前"
+  },
+  "edit.group": {
+    "en": "Group",
+    "ko": "그룹",
+    "ja": "グループ"
+  },
+  "edit.groupPlaceholder": {
+    "en": "e.g. production",
+    "ko": "예: production",
+    "ja": "例: production"
+  },
+  "edit.host": {
+    "en": "Host",
+    "ko": "호스트",
+    "ja": "ホスト"
+  },
+  "edit.hostPlaceholder": {
+    "en": "IP or domain",
+    "ko": "IP 또는 도메인",
+    "ja": "IPまたはドメイン"
+  },
+  "edit.port": {
+    "en": "Port",
+    "ko": "포트",
+    "ja": "ポート"
+  },
+  "edit.user": {
+    "en": "User",
+    "ko": "사용자",
+    "ja": "ユーザー"
+  },
+  "edit.userPlaceholder": {
+    "en": "e.g. ec2-user",
+    "ko": "예: ec2-user",
+    "ja": "例: ec2-user"
+  },
+  "edit.authType": {
+    "en": "Auth method",
+    "ko": "인증 방식",
+    "ja": "認証方式"
+  },
+  "edit.authKey": {
+    "en": "SSH Key",
+    "ko": "SSH 키",
+    "ja": "SSHキー"
+  },
+  "edit.authPassword": {
+    "en": "Password",
+    "ko": "비밀번호",
+    "ja": "パスワード"
+  },
+  "edit.authPem": {
+    "en": "PEM",
+    "ko": "PEM",
+    "ja": "PEM"
+  },
+  "edit.keySelect": {
+    "en": "SSH key",
+    "ko": "SSH 키 선택",
+    "ja": "SSHキー選択"
+  },
+  "edit.keyDefault": {
+    "en": "Use default key (~/.ssh)",
+    "ko": "기본 키 사용 (~/.ssh)",
+    "ja": "デフォルトキー (~/.ssh)"
+  },
+  "edit.keyHint": {
+    "en": "Pick a key created/imported here to use it (-i) on connect.",
+    "ko": "앱에서 생성/가져온 키를 선택하면 연결 시 해당 키(-i)를 사용합니다.",
+    "ja": "アプリで作成/取り込んだキーを選ぶと、接続時にそのキー(-i)を使用します。"
+  },
+  "edit.passwordHint": {
+    "en": "Passwords aren't stored; enter it in the terminal on connect.",
+    "ko": "비밀번호는 저장되지 않으며, 연결 시 터미널에서 직접 입력합니다.",
+    "ja": "パスワードは保存されません。接続時にターミナルで入力します。"
+  },
+  "edit.pemLabel": {
+    "en": "PEM key",
+    "ko": "PEM 키",
+    "ja": "PEMキー"
+  },
+  "edit.pemHint": {
+    "en": "Stored in a 0600 file outside the JSON store.",
+    "ko": "JSON 저장소가 아닌 0600 파일에 저장됩니다.",
+    "ja": "JSONストアではなく 0600 ファイルに保存されます。"
+  },
+  "edit.pemKeptHint": {
+    "en": "A key is already stored — leave empty to keep it, or paste a new one to replace.",
+    "ko": "이미 저장된 키가 있습니다 — 비워 두면 유지, 새로 붙여넣으면 교체됩니다.",
+    "ja": "既に保存された鍵があります — 空のままで保持、新しく貼り付けると置換します。"
+  },
+  "edit.authAgent": {
+    "en": "SSH Agent",
+    "ko": "SSH 에이전트",
+    "ja": "SSHエージェント"
+  },
+  "edit.agentHint": {
+    "en": "Uses keys loaded in your ssh-agent (and default identities).",
+    "ko": "ssh-agent에 로드된 키(및 기본 키)를 사용합니다.",
+    "ja": "ssh-agent に読み込まれた鍵（およびデフォルト鍵）を使用します。"
+  },
+  "edit.proxyJump": {
+    "en": "Jump host (ProxyJump)",
+    "ko": "점프 호스트 (ProxyJump)",
+    "ja": "踏み台ホスト (ProxyJump)"
+  },
+  "edit.proxyJumpHint": {
+    "en": "Optional bastion to tunnel through (-J), e.g. user@bastion or host1,host2.",
+    "ko": "거쳐갈 배스천(선택, -J). 예: user@bastion 또는 host1,host2.",
+    "ja": "経由する踏み台（任意, -J）。例: user@bastion または host1,host2。"
+  },
+  "edit.tags": {
+    "en": "Tags",
+    "ko": "태그",
+    "ja": "タグ"
+  },
+  "edit.tagsPlaceholder": {
+    "en": "Comma-separated (e.g. web, aws)",
+    "ko": "쉼표로 구분 (예: web, aws)",
+    "ja": "カンマ区切り (例: web, aws)"
+  },
+  "edit.notes": {
+    "en": "Notes",
+    "ko": "메모",
+    "ja": "メモ"
+  },
+  "edit.errName": {
+    "en": "Enter a name",
+    "ko": "이름을 입력하세요",
+    "ja": "名前を入力してください"
+  },
+  "edit.errHost": {
+    "en": "Enter a host",
+    "ko": "호스트를 입력하세요",
+    "ja": "ホストを入力してください"
+  },
+  "edit.errUser": {
+    "en": "Enter a user",
+    "ko": "사용자를 입력하세요",
+    "ja": "ユーザーを入力してください"
+  },
+  "edit.errPortInt": {
+    "en": "Port must be an integer",
+    "ko": "포트는 정수여야 합니다",
+    "ja": "ポートは整数で入力してください"
+  },
+  "edit.errPortMin": {
+    "en": "Port must be 1 or greater",
+    "ko": "포트는 1 이상이어야 합니다",
+    "ja": "ポートは1以上にしてください"
+  },
+  "edit.errPortMax": {
+    "en": "Port must be 65535 or less",
+    "ko": "포트는 65535 이하여야 합니다",
+    "ja": "ポートは65535以下にしてください"
+  },
+  "keys.subtitle": {
+    "en": "~/.ssh · {n} keys",
+    "ko": "~/.ssh · {n}개",
+    "ja": "~/.ssh · {n} 件"
+  },
+  "keys.create": {
+    "en": "Create Key",
+    "ko": "키 생성",
+    "ja": "キー作成"
+  },
+  "keys.import": {
+    "en": "Import Key",
+    "ko": "키 가져오기",
+    "ja": "キーをインポート"
+  },
+  "keys.empty": {
+    "en": "No SSH keys yet.",
+    "ko": "등록된 SSH 키가 없습니다.",
+    "ja": "SSHキーがありません。"
+  },
+  "keys.missingBadge": {
+    "en": "No private key",
+    "ko": "개인 키 없음",
+    "ja": "秘密鍵なし"
+  },
+  "keys.missingTitle": {
+    "en": "The private key file isn't on this machine; this key (-i) won't be used and ssh falls back to default auth.",
+    "ko": "이 기기에 개인 키 파일이 없습니다. 연결 시 이 키(-i)는 사용되지 않고 기본 인증으로 폴백합니다.",
+    "ja": "この端末に秘密鍵ファイルがありません。接続時にこのキー(-i)は使われず、デフォルト認証にフォールバックします。"
+  },
+  "keys.publicKey": {
+    "en": "Public key",
+    "ko": "공개 키",
+    "ja": "公開鍵"
+  },
+  "keys.createTitle": {
+    "en": "Create SSH Key",
+    "ko": "SSH 키 생성",
+    "ja": "SSHキーを作成"
+  },
+  "keys.name": {
+    "en": "Name",
+    "ko": "이름",
+    "ja": "名前"
+  },
+  "keys.namePlaceholderCreate": {
+    "en": "e.g. work-laptop",
+    "ko": "예: work-laptop",
+    "ja": "例: work-laptop"
+  },
+  "keys.createNameHint": {
+    "en": "The key file is saved to the app's ssh_keys/ folder.",
+    "ko": "키 파일은 앱 데이터 폴더의 ssh_keys/에 저장됩니다.",
+    "ja": "キーファイルはアプリの ssh_keys/ フォルダに保存されます。"
+  },
+  "keys.keyType": {
+    "en": "Key type",
+    "ko": "키 타입",
+    "ja": "キータイプ"
+  },
+  "keys.ed25519Rec": {
+    "en": "Ed25519 (recommended)",
+    "ko": "Ed25519 (권장)",
+    "ja": "Ed25519 (推奨)"
+  },
+  "keys.keySize": {
+    "en": "Key size",
+    "ko": "키 크기",
+    "ja": "キーサイズ"
+  },
+  "keys.passphraseOpt": {
+    "en": "Passphrase (optional)",
+    "ko": "Passphrase (선택)",
+    "ja": "パスフレーズ (任意)"
+  },
+  "keys.passphraseCreatePlaceholder": {
+    "en": "Leave empty for no passphrase",
+    "ko": "비워두면 passphrase 없이 생성",
+    "ja": "空欄ならパスフレーズなしで作成"
+  },
+  "keys.creating": {
+    "en": "Creating...",
+    "ko": "생성 중...",
+    "ja": "作成中..."
+  },
+  "keys.importTitle": {
+    "en": "Import SSH Key",
+    "ko": "SSH 키 가져오기",
+    "ja": "SSHキーをインポート"
+  },
+  "keys.loadFromFile": {
+    "en": "Load from file",
+    "ko": "파일에서 불러오기",
+    "ja": "ファイルから読み込む"
+  },
+  "keys.loadFromFileHint": {
+    "en": "Pick a private key (incl. a bare .pem) or .pub file. The public key is derived when missing.",
+    "ko": "개인 키(단독 .pem 포함) 또는 .pub 파일을 선택하세요. 공개 키가 없으면 자동으로 추출합니다.",
+    "ja": "秘密鍵（単体の .pem を含む）または .pub ファイルを選択します。公開鍵が無ければ自動で抽出します。"
+  },
+  "keys.dialogPickTitle": {
+    "en": "Select SSH key file",
+    "ko": "SSH 키 파일 선택",
+    "ja": "SSHキーファイルを選択"
+  },
+  "keys.loadError": {
+    "en": "Could not read file: {err}",
+    "ko": "파일을 읽지 못했습니다: {err}",
+    "ja": "ファイルを読み込めませんでした: {err}"
+  },
+  "keys.namePlaceholderImport": {
+    "en": "e.g. legacy-server-key",
+    "ko": "예: legacy-server-key",
+    "ja": "例: legacy-server-key"
+  },
+  "keys.publicKeyLabel": {
+    "en": "Public key (optional)",
+    "ko": "공개 키 (선택)",
+    "ja": "公開鍵 (任意)"
+  },
+  "keys.publicKeyOptHint": {
+    "en": "Optional for a bare PEM (e.g. AWS .pem). Use \"Derive public key\" below to fill it.",
+    "ko": "단독 PEM(예: AWS .pem)이면 선택사항입니다. 아래 \"개인 키에서 추출\"로 채울 수 있습니다.",
+    "ja": "単体PEM（例: AWS .pem）の場合は任意です。下の「秘密鍵から抽出」で入力できます。"
+  },
+  "keys.derivePub": {
+    "en": "Derive public key",
+    "ko": "개인 키에서 추출",
+    "ja": "秘密鍵から抽出"
+  },
+  "keys.deriving": {
+    "en": "Deriving…",
+    "ko": "추출 중…",
+    "ja": "抽出中…"
+  },
+  "keys.importTypeNote": {
+    "en": "On import the key type is just a label — it doesn't affect connecting (the key file is used as-is).",
+    "ko": "가져오기에서 키 타입은 표시용 라벨일 뿐, 실제 접속에는 영향이 없습니다(키 파일을 그대로 사용).",
+    "ja": "インポート時のキータイプは表示用ラベルで、接続には影響しません（キーファイルをそのまま使用）。"
+  },
+  "keys.privateKeyOpt": {
+    "en": "Private key (optional)",
+    "ko": "개인 키 (선택)",
+    "ja": "秘密鍵 (任意)"
+  },
+  "keys.privateKeyHint": {
+    "en": "If provided, it's saved to the app's ssh_keys/ folder.",
+    "ko": "입력하면 앱 데이터 폴더의 ssh_keys/에 파일로 저장됩니다.",
+    "ja": "入力するとアプリの ssh_keys/ フォルダにファイルとして保存されます。"
+  },
+  "keys.editTitle": {
+    "en": "Edit SSH Key",
+    "ko": "SSH 키 편집",
+    "ja": "SSHキーを編集"
+  },
+  "keys.edit": {
+    "en": "Edit",
+    "ko": "편집",
+    "ja": "編集"
+  },
+  "keys.replacePrivateOpt": {
+    "en": "Replace private key (optional)",
+    "ko": "개인 키 교체 (선택)",
+    "ja": "秘密鍵を置き換え (任意)"
+  },
+  "keys.replacePrivateHint": {
+    "en": "Leave empty to keep the current private key.",
+    "ko": "비워 두면 기존 개인 키를 그대로 유지합니다.",
+    "ja": "空のままにすると既存の秘密鍵を保持します。"
+  },
+  "keys.replacePrivatePlaceholder": {
+    "en": "••• stored key kept — paste a new key to replace",
+    "ko": "••• 저장된 키 유지 — 교체하려면 새 키를 붙여넣으세요",
+    "ja": "••• 保存された鍵を保持 — 置き換えるには新しい鍵を貼り付け"
+  },
+  "keys.changePassphrase": {
+    "en": "Change passphrase",
+    "ko": "패스프레이즈 변경",
+    "ja": "パスフレーズ変更"
+  },
+  "keys.currentPassphrase": {
+    "en": "Current passphrase",
+    "ko": "현재 패스프레이즈",
+    "ja": "現在のパスフレーズ"
+  },
+  "keys.newPassphrase": {
+    "en": "New passphrase (empty to remove)",
+    "ko": "새 패스프레이즈 (비우면 제거)",
+    "ja": "新しいパスフレーズ (空で解除)"
+  },
+  "keys.changePassphraseBtn": {
+    "en": "Change passphrase",
+    "ko": "패스프레이즈 변경",
+    "ja": "パスフレーズを変更"
+  },
+  "keys.changing": {
+    "en": "Changing…",
+    "ko": "변경 중…",
+    "ja": "変更中…"
+  },
+  "keys.passphraseChanged": {
+    "en": "Passphrase updated.",
+    "ko": "패스프레이즈가 변경되었습니다.",
+    "ja": "パスフレーズを変更しました。"
+  },
+  "keys.passphraseImportPlaceholder": {
+    "en": "Enter passphrase if the key has one",
+    "ko": "개인 키에 passphrase가 있다면 입력",
+    "ja": "鍵にパスフレーズがあれば入力"
+  },
+  "keys.importing": {
+    "en": "Importing...",
+    "ko": "가져오는 중...",
+    "ja": "インポート中..."
+  },
+  "keys.confirmDelete": {
+    "en": "Delete key \"{name}\"?",
+    "ko": "{name} 키를 삭제하시겠습니까?",
+    "ja": "キー「{name}」を削除しますか？"
+  },
+  "keys.confirmDeleteTitle": {
+    "en": "Delete key",
+    "ko": "키 삭제",
+    "ja": "キー削除"
+  },
+  "term.local": {
+    "en": "Local terminal",
+    "ko": "로컬 터미널",
+    "ja": "ローカルターミナル"
+  },
+  "term.newLocalTitle": {
+    "en": "New local terminal (Cmd+T)",
+    "ko": "새 로컬 터미널 (Cmd+T)",
+    "ja": "新規ローカルターミナル (Cmd+T)"
+  },
+  "term.splitRightTitle": {
+    "en": "Split right (pick server/local)",
+    "ko": "옆으로 분할 (서버/로컬 선택)",
+    "ja": "右に分割 (サーバー/ローカル選択)"
+  },
+  "term.splitDownTitle": {
+    "en": "Split down (pick server/local)",
+    "ko": "아래로 분할 (서버/로컬 선택)",
+    "ja": "下に分割 (サーバー/ローカル選択)"
+  },
+  "term.newConnection": {
+    "en": "New connection",
+    "ko": "새 연결",
+    "ja": "新規接続"
+  },
+  "term.pickNewTab": {
+    "en": "New tab",
+    "ko": "새 탭",
+    "ja": "新規タブ"
+  },
+  "term.pickSplitRight": {
+    "en": "Split right",
+    "ko": "옆으로 분할",
+    "ja": "右に分割"
+  },
+  "term.pickSplitDown": {
+    "en": "Split down",
+    "ko": "아래로 분할",
+    "ja": "下に分割"
+  },
+  "term.noServers": {
+    "en": "No servers",
+    "ko": "등록된 서버 없음",
+    "ja": "サーバーなし"
+  },
+  "term.searchPlaceholder": {
+    "en": "Search…",
+    "ko": "검색…",
+    "ja": "検索…"
+  },
+  "term.searchNext": {
+    "en": "Next match (Enter)",
+    "ko": "다음 결과 (Enter)",
+    "ja": "次の一致 (Enter)"
+  },
+  "term.searchPrev": {
+    "en": "Previous match (Shift+Enter)",
+    "ko": "이전 결과 (Shift+Enter)",
+    "ja": "前の一致 (Shift+Enter)"
+  },
+  "term.closedNotice": {
+    "en": "Session ended. Close this pane.",
+    "ko": "세션이 종료되었습니다. 패널을 닫아주세요.",
+    "ja": "セッションが終了しました。パネルを閉じてください。"
+  },
+  "term.connectFail": {
+    "en": "Connection failed",
+    "ko": "연결 실패",
+    "ja": "接続失敗"
+  },
+  "term.reconnect": {
+    "en": "Reconnect",
+    "ko": "재연결",
+    "ja": "再接続"
+  },
+  "term.closeTab": {
+    "en": "Close tab",
+    "ko": "탭 닫기",
+    "ja": "タブを閉じる"
+  },
+  "term.closeOthers": {
+    "en": "Close other tabs",
+    "ko": "다른 탭 닫기",
+    "ja": "他のタブを閉じる"
+  },
+  "term.closeRight": {
+    "en": "Close tabs to the right",
+    "ko": "오른쪽 탭 닫기",
+    "ja": "右側のタブを閉じる"
+  },
+  "term.closeLeft": {
+    "en": "Close tabs to the left",
+    "ko": "왼쪽 탭 닫기",
+    "ja": "左側のタブを閉じる"
+  },
+  "term.copy": {
+    "en": "Copy",
+    "ko": "복사",
+    "ja": "コピー"
+  },
+  "term.paste": {
+    "en": "Paste",
+    "ko": "붙여넣기",
+    "ja": "貼り付け"
+  },
+  "term.confirmCloseTab": {
+    "en": "Close this tab and end its session(s)?",
+    "ko": "이 탭과 세션을 닫을까요?",
+    "ja": "このタブとセッションを閉じますか？"
+  },
+  "term.confirmCloseOthers": {
+    "en": "Close all other tabs?",
+    "ko": "다른 탭을 모두 닫을까요?",
+    "ja": "他のタブをすべて閉じますか？"
+  },
+  "term.confirmCloseRight": {
+    "en": "Close all tabs to the right?",
+    "ko": "오른쪽 탭을 모두 닫을까요?",
+    "ja": "右側のタブをすべて閉じますか？"
+  },
+  "term.confirmCloseTitle": {
+    "en": "Close tab",
+    "ko": "탭 닫기",
+    "ja": "タブを閉じる"
+  },
+  "term.confirmCloseAction": {
+    "en": "Close",
+    "ko": "닫기",
+    "ja": "閉じる"
+  },
+  "term.broadcast": {
+    "en": "Broadcast input",
+    "ko": "동시 입력",
+    "ja": "一斉入力"
+  },
+  "common.close": {
+    "en": "Close",
+    "ko": "닫기",
+    "ja": "閉じる"
+  },
+  "term.emptyHint": {
+    "en": "Start with Cmd+T or 'New connection' (top right). Use the split buttons to divide panes.",
+    "ko": "Cmd+T 또는 우측 상단 '새 연결'로 시작하세요. 분할 버튼으로 패널을 나눌 수 있습니다.",
+    "ja": "Cmd+T か右上の「新規接続」で開始します。分割ボタンでパネルを分けられます。"
+  },
+  "settings.syncDesc": {
+    "en": "Sync your server list with the ~/.ssh/config file.",
+    "ko": "~/.ssh/config 파일과 앱의 서버 목록을 동기화할 수 있습니다.",
+    "ja": "~/.ssh/config ファイルとアプリのサーバー一覧を同期できます。"
+  },
+  "settings.toConfigTitle": {
+    "en": "Servers → SSH Config",
+    "ko": "서버 → SSH Config",
+    "ja": "サーバー → SSH Config"
+  },
+  "settings.toConfigDesc": {
+    "en": "Writes the app's server list to ~/.ssh/config. The existing file is backed up automatically.",
+    "ko": "앱의 서버 목록을 ~/.ssh/config에 작성합니다. 기존 파일은 자동 백업됩니다.",
+    "ja": "アプリのサーバー一覧を ~/.ssh/config に書き出します。既存ファイルは自動でバックアップされます。"
+  },
+  "settings.fromConfigTitle": {
+    "en": "SSH Config → Servers",
+    "ko": "SSH Config → 서버",
+    "ja": "SSH Config → サーバー"
+  },
+  "settings.fromConfigDesc": {
+    "en": "Imports servers from ~/.ssh/config into the list.",
+    "ko": "~/.ssh/config에서 서버 정보를 가져와 목록에 추가합니다.",
+    "ja": "~/.ssh/config からサーバー情報を取り込んで一覧に追加します。"
+  },
+  "settings.sync": {
+    "en": "Sync",
+    "ko": "동기화",
+    "ja": "同期"
+  },
+  "settings.syncing": {
+    "en": "Syncing...",
+    "ko": "동기화 중...",
+    "ja": "同期中..."
+  },
+  "settings.syncToDone": {
+    "en": "Synced the server list to ~/.ssh/config. (existing file backed up as config.bak.<time>)",
+    "ko": "서버 목록을 ~/.ssh/config에 동기화했습니다. (기존 파일은 config.bak.<시각>으로 백업)",
+    "ja": "サーバー一覧を ~/.ssh/config に同期しました。(既存ファイルは config.bak.<時刻> にバックアップ)"
+  },
+  "settings.syncToFail": {
+    "en": "Sync failed: {err}",
+    "ko": "동기화 실패: {err}",
+    "ja": "同期失敗: {err}"
+  },
+  "settings.importFromConfigDone": {
+    "en": "Imported {n} new servers: {names}",
+    "ko": "{n}개의 새 서버를 가져왔습니다: {names}",
+    "ja": "{n} 件の新規サーバーを取り込みました: {names}"
+  },
+  "settings.importFromConfigNone": {
+    "en": "No new servers to import. (existing names are skipped)",
+    "ko": "가져올 새 서버가 없습니다. (이미 등록된 이름은 건너뜁니다)",
+    "ja": "取り込む新規サーバーはありません。(既存の名前はスキップ)"
+  },
+  "settings.importFail": {
+    "en": "Import failed: {err}",
+    "ko": "가져오기 실패: {err}",
+    "ja": "インポート失敗: {err}"
+  },
+  "settings.configDesc": {
+    "en": "The server list is this file. Hand-edited hosts show up automatically; use Reload to pick up changes right away.",
+    "ko": "서버 목록이 곧 이 파일입니다. 손으로 추가한 호스트도 그대로 나타나며, 바로 반영하려면 다시 읽기를 누르세요.",
+    "ja": "サーバー一覧はこのファイルそのものです。手書きのホストもそのまま表示され、すぐ反映するには再読み込みを押します。"
+  },
+  "settings.configPath": {
+    "en": "Config file",
+    "ko": "설정 파일",
+    "ja": "設定ファイル"
+  },
+  "settings.reload": {
+    "en": "Reload",
+    "ko": "다시 읽기",
+    "ja": "再読み込み"
+  },
+  "settings.reloadDone": {
+    "en": "Reloaded ~/.ssh/config.",
+    "ko": "~/.ssh/config를 다시 읽었습니다.",
+    "ja": "~/.ssh/config を再読み込みしました。"
+  },
+  "settings.reloadNoChange": {
+    "en": "Already up to date.",
+    "ko": "변경된 내용이 없습니다.",
+    "ja": "変更はありません。"
+  },
+  "settings.backupDesc": {
+    "en": "Export the server list to a file and import it on another machine. Secrets aren't included; matching names are skipped.",
+    "ko": "서버 목록을 파일로 내보내고 다른 기기에서 가져옵니다. 비밀 키는 포함되지 않으며, 이름이 같은 항목은 건너뜁니다.",
+    "ja": "サーバー一覧をファイルに書き出し、別の端末で取り込みます。秘密鍵は含まれず、同名の項目はスキップされます。"
+  },
+  "settings.exportDesc": {
+    "en": "Save the current server/key list as a JSON file.",
+    "ko": "현재 서버·키 목록을 JSON 파일로 저장합니다.",
+    "ja": "現在のサーバー・キー一覧をJSONファイルに保存します。"
+  },
+  "settings.importDesc": {
+    "en": "Pick an exported JSON file to merge into the list.",
+    "ko": "내보낸 JSON 파일을 골라 목록에 병합합니다.",
+    "ja": "書き出したJSONファイルを選んで一覧にマージします。"
+  },
+  "settings.exportDialogTitle": {
+    "en": "Export server settings",
+    "ko": "서버 설정 내보내기",
+    "ja": "サーバー設定をエクスポート"
+  },
+  "settings.importDialogTitle": {
+    "en": "Import server settings",
+    "ko": "서버 설정 가져오기",
+    "ja": "サーバー設定をインポート"
+  },
+  "settings.exportDone": {
+    "en": "Exported: {path}",
+    "ko": "내보내기 완료: {path}",
+    "ja": "エクスポート完了: {path}"
+  },
+  "settings.exportFail": {
+    "en": "Export failed: {err}",
+    "ko": "내보내기 실패: {err}",
+    "ja": "エクスポート失敗: {err}"
+  },
+  "settings.importDone": {
+    "en": "Imported — servers +{sa} (skipped {ss}), keys +{ka} (skipped {ks})",
+    "ko": "가져오기 완료 — 서버 +{sa} (건너뜀 {ss}), 키 +{ka} (건너뜀 {ks})",
+    "ja": "取り込み完了 — サーバー +{sa} (スキップ {ss})、キー +{ka} (スキップ {ks})"
+  },
+  "settings.phosphorTitle": {
+    "en": "Phosphor color",
+    "ko": "화면 인광색",
+    "ja": "発光色"
+  },
+  "settings.phosphorDesc": {
+    "en": "Choose the console accent color.",
+    "ko": "콘솔 액센트 컬러를 선택합니다.",
+    "ja": "コンソールのアクセントカラーを選択します。"
+  },
+  "settings.language": {
+    "en": "Language",
+    "ko": "언어",
+    "ja": "言語"
+  },
+  "settings.languageDesc": {
+    "en": "Choose the interface language. (default: system)",
+    "ko": "인터페이스 언어를 선택합니다. (기본: 시스템)",
+    "ja": "インターフェース言語を選択します。(既定: システム)"
+  },
+  "settings.startMenu": {
+    "en": "Start menu",
+    "ko": "시작 메뉴",
+    "ja": "起動メニュー"
+  },
+  "settings.startMenuDesc": {
+    "en": "Which menu opens when the app launches.",
+    "ko": "앱을 켤 때 처음 열 메뉴를 선택합니다.",
+    "ja": "アプリ起動時に最初に開くメニュー。"
+  },
+  "settings.exportWithKeys": {
+    "en": "Export with keys",
+    "ko": "키 포함 내보내기",
+    "ja": "キーを含めてエクスポート"
+  },
+  "settings.exportWithKeysDesc": {
+    "en": "Includes private keys, encrypted with a passphrase.",
+    "ko": "개인 키까지 암호로 암호화해 함께 내보냅니다.",
+    "ja": "秘密鍵までパスフレーズで暗号化して書き出します。"
+  },
+  "settings.passphrase": {
+    "en": "Passphrase",
+    "ko": "암호",
+    "ja": "パスフレーズ"
+  },
+  "settings.passphraseExportHint": {
+    "en": "You'll need this passphrase to import.",
+    "ko": "가져올 때 이 암호가 필요합니다.",
+    "ja": "取り込み時にこのパスフレーズが必要です。"
+  },
+  "settings.passphraseImportHint": {
+    "en": "This file is encrypted. Enter the passphrase.",
+    "ko": "이 파일은 암호화되어 있습니다. 암호를 입력하세요.",
+    "ja": "このファイルは暗号化されています。パスフレーズを入力してください。"
+  },
+  "settings.decrypt": {
+    "en": "Decrypt",
+    "ko": "복호화",
+    "ja": "復号"
+  },
+  "settings.exportEncryptedDone": {
+    "en": "Encrypted export (with keys): {path}",
+    "ko": "키 포함 암호화 내보내기 완료: {path}",
+    "ja": "暗号化エクスポート完了（キー含む）: {path}"
+  },
+  "settings.shortcutsDesc": {
+    "en": "Customize terminal shortcuts. (Cmd+digit to switch tabs, Cmd+Option+Arrow to move between panes are fixed)",
+    "ko": "터미널 단축키를 변경합니다. (Cmd+숫자 탭 이동, Cmd+Option+방향키 패널 이동은 고정)",
+    "ja": "ターミナルのショートカットを変更します。(Cmd+数字でタブ切替、Cmd+Option+矢印でパネル移動は固定)"
+  },
+  "settings.pressKeys": {
+    "en": "Press keys…",
+    "ko": "키를 누르세요…",
+    "ja": "キーを押してください…"
+  },
+  "settings.exportSelectTitle": {
+    "en": "Select items to export",
+    "ko": "내보낼 항목 선택",
+    "ja": "エクスポートする項目を選択"
+  },
+  "settings.selectAll": {
+    "en": "Select all",
+    "ko": "전체 선택",
+    "ja": "すべて選択"
+  },
+  "settings.includeShortcuts": {
+    "en": "Include shortcuts",
+    "ko": "단축키 설정 포함",
+    "ja": "ショートカットを含める"
+  },
+  "settings.accent": {
+    "en": "Accent color",
+    "ko": "강조색",
+    "ja": "強調色"
+  },
+  "settings.bgTone": {
+    "en": "Background",
+    "ko": "배경 톤",
+    "ja": "背景トーン"
+  },
+  "settings.termColors": {
+    "en": "Terminal colors",
+    "ko": "터미널 색상",
+    "ja": "ターミナル色"
+  },
+  "settings.termFontSize": {
+    "en": "Terminal font size",
+    "ko": "터미널 글자 크기",
+    "ja": "ターミナル文字サイズ"
+  },
+  "settings.termFg": {
+    "en": "Text",
+    "ko": "글자색",
+    "ja": "文字色"
+  },
+  "settings.termBg": {
+    "en": "Background",
+    "ko": "배경색",
+    "ja": "背景色"
+  },
+  "settings.uiOpacity": {
+    "en": "UI translucency",
+    "ko": "UI 투명도",
+    "ja": "UIの透明度"
+  },
+  "settings.custom": {
+    "en": "Custom",
+    "ko": "커스텀",
+    "ja": "カスタム"
+  },
+  "shortcut.newTab": {
+    "en": "New tab",
+    "ko": "새 탭",
+    "ja": "新規タブ"
+  },
+  "shortcut.closePane": {
+    "en": "Close pane",
+    "ko": "패널 닫기",
+    "ja": "パネルを閉じる"
+  },
+  "shortcut.splitRight": {
+    "en": "Split right",
+    "ko": "옆으로 분할",
+    "ja": "右に分割"
+  },
+  "shortcut.splitDown": {
+    "en": "Split down",
+    "ko": "아래로 분할",
+    "ja": "下に分割"
+  },
+  "shortcut.broadcast": {
+    "en": "Toggle broadcast input",
+    "ko": "동시 입력 토글",
+    "ja": "一斉入力の切替"
+  },
+  "shortcut.fontIncrease": {
+    "en": "Increase font size",
+    "ko": "글자 크기 키우기",
+    "ja": "文字サイズを大きく"
+  },
+  "shortcut.fontDecrease": {
+    "en": "Decrease font size",
+    "ko": "글자 크기 줄이기",
+    "ja": "文字サイズを小さく"
+  },
+  "shortcut.focusLeft": {
+    "en": "Focus pane left",
+    "ko": "왼쪽 패널로 이동",
+    "ja": "左のパネルへ"
+  },
+  "shortcut.focusRight": {
+    "en": "Focus pane right",
+    "ko": "오른쪽 패널로 이동",
+    "ja": "右のパネルへ"
+  },
+  "shortcut.focusUp": {
+    "en": "Focus pane up",
+    "ko": "위쪽 패널로 이동",
+    "ja": "上のパネルへ"
+  },
+  "shortcut.focusDown": {
+    "en": "Focus pane down",
+    "ko": "아래쪽 패널로 이동",
+    "ja": "下のパネルへ"
+  }
+}
