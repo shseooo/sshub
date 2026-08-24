@@ -534,8 +534,15 @@ impl Render for Workspace {
             .h(px(TITLEBAR_HEIGHT))
             .flex_shrink_0()
             .bg(t.bg)
-            .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, window, _cx| {
-                window.start_window_move();
+            .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, _cx| {
+                // 더블클릭은 확대(zoom) — macOS에서 타이틀바 더블클릭의 표준
+                // 동작이다. 드래그로 시작하면 창이 딸려 움직여 버리므로 이동과
+                // 갈라서 처리한다.
+                if event.click_count >= 2 {
+                    window.zoom_window();
+                } else {
+                    window.start_window_move();
+                }
             });
 
         div()
