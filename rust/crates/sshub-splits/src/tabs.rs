@@ -36,6 +36,17 @@ pub fn tabs_up_to_inclusive(tabs: Vec<TerminalTab>, tab_id: &TabId) -> Vec<Termi
     arr
 }
 
+/// `tab_id`부터(포함) 남긴다 (왼쪽 전부 닫기). 미존재 id는 그대로 반환.
+pub fn tabs_from_inclusive(tabs: Vec<TerminalTab>, tab_id: &TabId) -> Vec<TerminalTab> {
+    let idx = match tabs.iter().position(|t| t.id == *tab_id) {
+        Some(i) => i,
+        None => return tabs,
+    };
+    let mut arr = tabs;
+    arr.drain(..idx);
+    arr
+}
+
 /// `item`을 경계 `at_index`에 삽입(clamp); `None`이면 맨 뒤에 추가.
 pub fn insert_at_index<T>(mut arr: Vec<T>, item: T, at_index: Option<usize>) -> Vec<T> {
     let i = at_index.unwrap_or(arr.len()).min(arr.len());

@@ -109,11 +109,15 @@ pub type PaneLabelFn = Box<dyn Fn(&SessionId) -> SharedString>;
 /// 드래그 호버 보고. `Some(side)`는 진입/이동, `None`은 그 pane에서 벗어남이다.
 /// pane별로 자기 자신에 대해서만 보고하므로 리스너 호출 순서에 의존하지 않는다.
 pub type DragOverCallback = Box<dyn Fn(SessionId, Option<DropSide>, &mut Window, &mut App)>;
+/// 우클릭 — 포인터의 **창 좌표**를 그대로 넘긴다(컨텍스트 메뉴가 거기 뜬다).
+pub type PaneMenuCallback = Box<dyn Fn(SessionId, Point<Pixels>, &mut Window, &mut App)>;
 
 pub struct PaneHandlers {
     pub focus: PaneCallback,
     /// 헤더 더블클릭 — 인라인 라벨 변경 시작.
     pub rename: PaneCallback,
+    /// 우클릭 — pane 컨텍스트 메뉴.
+    pub context_menu: PaneMenuCallback,
     pub divider_down: DividerCallback,
     pub drop_pane: PaneDropCallback,
     pub drop_tab: TabDropCallback,
@@ -424,6 +428,8 @@ fn render_leaf(leaf: &TerminalLeaf, ctx: &PaneTreeCtx<'_>) -> AnyElement {
 
     let handlers = ctx.handlers.clone();
     let focus_id = session_id.clone();
+    let menu_handlers = ctx.handlers.clone();
+    let menu_id = session_id.clone();
     let drop_pane_handlers = ctx.handlers.clone();
     let drop_tab_handlers = ctx.handlers.clone();
     let pane_target = session_id.clone();
@@ -442,6 +448,15 @@ fn render_leaf(leaf: &TerminalLeaf, ctx: &PaneTreeCtx<'_>) -> AnyElement {
         .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
             (handlers.focus)(focus_id.clone(), window, cx);
         })
+        // 우클릭 — 컨텍스트 메뉴. 터미널 본문의 마우스 리스너는 왼쪽 버튼에만
+        // 선택을 시작하므로(`Terminal::mouse_down`) 메뉴를 열어도 드래그 선택이
+        // 같이 시작되지 않는다. 메뉴 자체는 `deferred`로 그려져 터미널 위에 뜬다.
+        .on_mouse_down(
+            MouseButton::Right,
+            move |event: &MouseDownEvent, window, cx| {
+                (menu_handlers.context_menu)(menu_id.clone(), event.position, window, cx);
+            },
+        )
         // 드래그 중 포인터 위치는 `on_drag_move`로만 알 수 있다(`drag_over`는
         // 요소 전체 스타일만 바꿔 어느 쪽 절반인지 표현하지 못한다).
         .on_drag_move::<PaneDrag>(move |event, window, cx| {

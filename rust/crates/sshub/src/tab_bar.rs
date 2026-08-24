@@ -13,7 +13,7 @@ use std::rc::Rc;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     canvas, div, px, AnyElement, App, AppContext as _, Bounds, CursorStyle, Entity, InteractiveElement, IntoElement,
-    ClickEvent, MouseButton, ParentElement, Pixels, SharedString,
+    ClickEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, SharedString,
     StatefulInteractiveElement, Styled, Window,
 };
 use sshub_splits::{tab_title, TabId, TerminalTab};
@@ -28,12 +28,16 @@ pub type TabCallback = Box<dyn Fn(TabId, &mut Window, &mut App)>;
 pub type BarCallback = Box<dyn Fn(&mut Window, &mut App)>;
 pub type TabDropCallback = Box<dyn Fn(TabDrag, &mut Window, &mut App)>;
 pub type PaneDropCallback = Box<dyn Fn(PaneDrag, &mut Window, &mut App)>;
+/// 우클릭 — 포인터의 **창 좌표**를 그대로 넘긴다(컨텍스트 메뉴가 거기 뜬다).
+pub type TabMenuCallback = Box<dyn Fn(TabId, Point<Pixels>, &mut Window, &mut App)>;
 
 pub struct TabBarHandlers {
     pub select: TabCallback,
     pub close: TabCallback,
     /// 더블클릭 — 인라인 이름 변경 시작.
     pub rename: TabCallback,
+    /// 우클릭 — 탭 컨텍스트 메뉴. **활성 탭을 바꾸지 않는다**.
+    pub context_menu: TabMenuCallback,
     pub new_tab: BarCallback,
     /// 드롭 지점은 워크스페이스가 현재 마우스 위치에서 삽입 경계로 환산한다.
     pub drop_tab: TabDropCallback,
@@ -152,6 +156,8 @@ fn render_tab(tab: &TerminalTab, ctx: &TabBarCtx<'_>) -> AnyElement {
     let rename_id = tab.id.clone();
     let close_handlers = ctx.handlers.clone();
     let close_id = tab.id.clone();
+    let menu_handlers = ctx.handlers.clone();
+    let menu_id = tab.id.clone();
     let drop_tab = ctx.handlers.clone();
     let drop_pane = ctx.handlers.clone();
     let ghost = title.clone();
@@ -184,6 +190,16 @@ fn render_tab(tab: &TerminalTab, ctx: &TabBarCtx<'_>) -> AnyElement {
                 (handlers.select)(select_id.clone(), window, cx);
             }
         })
+        // 우클릭은 선택을 건드리지 않는다 — 활성 탭을 바꾸면 "다른 탭 닫기"의
+        // 대상이 눈으로 본 탭과 달라 보이고, 마우스 다운 시점 선택은 드래그도
+        // 망가뜨린다(위 on_click 주석 참고).
+        .on_mouse_down(
+            MouseButton::Right,
+            move |event: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                (menu_handlers.context_menu)(menu_id.clone(), event.position, window, cx);
+            },
+        )
         .on_drag(
             TabDrag {
                 tab_id: tab.id.clone(),

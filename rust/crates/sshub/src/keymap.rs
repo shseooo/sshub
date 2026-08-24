@@ -23,6 +23,17 @@ actions!(
         FocusRight,
         FocusUp,
         FocusDown,
+        // ⌘1..⌘9 — 리바인딩 대상이 아니라 고정 바인딩이다(설정의
+        // `default_shortcuts()`에 넣지 않는다).
+        SelectTab1,
+        SelectTab2,
+        SelectTab3,
+        SelectTab4,
+        SelectTab5,
+        SelectTab6,
+        SelectTab7,
+        SelectTab8,
+        SelectTab9,
     ]
 );
 
@@ -94,7 +105,19 @@ pub fn canonicalize_combo(combo: &str) -> Option<String> {
 /// 순서를 지켜야 한다.
 pub fn register_all(cx: &mut App, shortcuts: &BTreeMap<String, String>) {
     let defaults = sshub_core::settings::default_shortcuts();
-    let mut bindings = vec![KeyBinding::new("cmd-n", NewWindow, Some("Workspace"))];
+    let mut bindings = vec![
+        KeyBinding::new("cmd-n", NewWindow, Some("Workspace")),
+        // 탭 직접 이동. ⌘9만 "마지막 탭"인 것은 macOS/Chrome/Zed 관례를 따른 것.
+        KeyBinding::new("cmd-1", SelectTab1, Some("Workspace")),
+        KeyBinding::new("cmd-2", SelectTab2, Some("Workspace")),
+        KeyBinding::new("cmd-3", SelectTab3, Some("Workspace")),
+        KeyBinding::new("cmd-4", SelectTab4, Some("Workspace")),
+        KeyBinding::new("cmd-5", SelectTab5, Some("Workspace")),
+        KeyBinding::new("cmd-6", SelectTab6, Some("Workspace")),
+        KeyBinding::new("cmd-7", SelectTab7, Some("Workspace")),
+        KeyBinding::new("cmd-8", SelectTab8, Some("Workspace")),
+        KeyBinding::new("cmd-9", SelectTab9, Some("Workspace")),
+    ];
     for action in ACTION_NAMES {
         let combo = shortcuts
             .get(action)
@@ -294,6 +317,21 @@ mod tests {
         assert_eq!(display_combo("alt-cmd-left"), "⌥⌘←");
         assert_eq!(display_combo("cmd-shift-="), "⌘⇧=");
         assert_eq!(display_combo("cmd-shift--"), "⌘⇧-");
+    }
+
+    #[test]
+    fn tab_selection_bindings_are_fixed_not_rebindable() {
+        // ⌘1..⌘9는 사용자 재지정 대상이 아니다 — 설정 맵에 새면 단축키 화면에
+        // 나타나고 길이 단언(action_names_match_settings_defaults)이 깨진다.
+        let defaults = sshub_core::settings::default_shortcuts();
+        for n in 1..=9 {
+            let combo = format!("cmd-{n}");
+            assert!(is_valid_combo(&combo));
+            assert!(
+                !defaults.values().any(|c| *c == combo),
+                "{combo}가 리바인딩 기본값과 충돌한다"
+            );
+        }
     }
 
     #[test]

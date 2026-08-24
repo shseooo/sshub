@@ -13,21 +13,23 @@ use std::rc::Rc;
 use gpui::{
     div, App, AppContext as _, Bounds, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, IntoElement, MouseButton, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Render, SharedString, Styled, Subscription, Window,
+    MouseUpEvent, ParentElement, Pixels, Point, Render, SharedString, Styled, Subscription,
+    Window,
 };
 use serde::{Deserialize, Serialize};
 use sshub_splits::{
     detach_pane, insert_at_index, leaves, merge_tab, move_pane, remove_leaf, rename_leaf,
     reorder_tabs, revive_ids, set_split_sizes, split_at, tab_title, tabs_except,
-    tabs_up_to_inclusive, DropSide, PaneNode, SessionId, SplitDirection, SplitId, TabId,
-    TerminalLeaf, TerminalTab,
+    tabs_from_inclusive, tabs_up_to_inclusive, DropSide, PaneNode, SessionId, SplitDirection,
+    SplitId, TabId, TerminalLeaf, TerminalTab,
 };
 use sshub_terminal::search::SearchQuery;
 
 use crate::i18n::{tr, Lang, TrKey};
 use crate::keymap::{
-    ClosePane, FocusDown, FocusLeft, FocusRight, FocusUp, FontDecrease, FontIncrease, NewTab,
-    SplitDown, SplitRight, ToggleBroadcast,
+    display_combo, ClosePane, FocusDown, FocusLeft, FocusRight, FocusUp, FontDecrease,
+    FontIncrease, NewTab, SelectTab1, SelectTab2, SelectTab3, SelectTab4, SelectTab5, SelectTab6,
+    SelectTab7, SelectTab8, SelectTab9, SplitDown, SplitRight, ToggleBroadcast,
 };
 use crate::session::pane_label;
 use crate::session_registry::{self, SessionRegistry};
@@ -39,7 +41,7 @@ use crate::state::{app_state, AppState, StateEvent};
 use crate::tab_bar::{drop_boundary, render_tab_bar, TabBarCtx, TabBarHandlers};
 use crate::terminal_view::{BroadcastInput, BroadcastSink, TerminalView};
 use crate::theme::{theme, Theme};
-use crate::ui::{ConfirmDialog, ModalOverlay, TextInput};
+use crate::ui::{ConfirmDialog, ContextMenu, ContextMenuItem, ModalOverlay, TextInput};
 
 /// 검색 매치 상한 — 화면 하이라이트용이라 무제한으로 모을 이유가 없다.
 const MAX_SEARCH_MATCHES: usize = 1000;
@@ -58,6 +60,7 @@ enum PendingClose {
     Tab(TabId),
     Others(TabId),
     Right(TabId),
+    Left(TabId),
 }
 
 /// `Settings.terminal_layout` 영속 포맷 — TS `{tabs, activeIndex}`와 동일.
@@ -99,6 +102,11 @@ pub struct TerminalWorkspace {
     /// 드래그가 지나가는 pane과 삽입 방향 — 드롭 미리보기의 유일한 근거.
     drag_over: Option<(SessionId, DropSide)>,
     confirm: Option<Entity<ConfirmDialog>>,
+    /// 열려 있는 우클릭 메뉴 (pane·탭 공용 — 동시에 둘은 뜨지 않는다).
+    menu: Option<Entity<ContextMenu>>,
+    /// 그 메뉴의 dismiss 구독. 메뉴를 새로 열 때 교체되며(= 옛 구독 폐기),
+    /// `_subscriptions`에 쌓아 두면 메뉴를 열 때마다 죽은 구독이 누적된다.
+    menu_sub: Option<Subscription>,
     divider: Option<DividerGrab>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -177,6 +185,8 @@ impl TerminalWorkspace {
             pane_rename: None,
             drag_over: None,
             confirm: None,
+            menu: None,
+            menu_sub: None,
             divider: None,
             focus_handle: cx.focus_handle(),
             _subscriptions: vec![state_sub],
@@ -372,6 +382,16 @@ impl TerminalWorkspace {
         }
     }
 
+    /// 왼쪽 탭 전부 닫기 — 오른쪽 형제와 같은 확인 절차를 탄다.
+    pub fn close_tabs_to_the_left(&mut self, tab_id: TabId, window: &mut Window, cx: &mut Context<Self>) {
+        let has_left = self.tab_index(&tab_id).is_some_and(|i| i > 0);
+        if has_left {
+            // i18n에 "왼쪽 탭을 모두 닫을까요?" 문구가 없어 항목 라벨을 그대로
+            // 확인 문구로 쓴다 (새 사용자 문자열을 만들지 않기 위해).
+            self.ask(PendingClose::Left(tab_id), TrKey::TermCloseLeft, window, cx);
+        }
+    }
+
     fn ask(
         &mut self,
         pending: PendingClose,
@@ -444,6 +464,21 @@ impl TerminalWorkspace {
                     self.active_tab = self.tabs.last().map(|t| t.id.clone());
                 }
             }
+            PendingClose::Left(tab_id) => {
+                self.tabs = tabs_from_inclusive(std::mem::take(&mut self.tabs), &tab_id);
+                if self.active_index().is_none() {
+                    self.active_tab = self.tabs.first().map(|t| t.id.clone());
+                }
+            }
+        }
+        // 여러 탭을 한 번에 닫으면 포커스가 사라진 세션을 가리킬 수 있다.
+        // 비워 두면 `focus_active_pane`이 활성 탭의 첫 pane으로 되돌린다.
+        if self
+            .focused_pane
+            .as_ref()
+            .is_some_and(|s| self.tab_of_pane(s).is_none())
+        {
+            self.focused_pane = None;
         }
         self.sync_sessions(window, cx);
         self.focus_active_pane(window, cx);
@@ -745,6 +780,181 @@ impl TerminalWorkspace {
             .unwrap_or(DropSide::Right)
     }
 
+    // ---- 컨텍스트 메뉴 -----------------------------------------------------
+
+    /// 사용자가 지정한 단축키의 표시 라벨. 미지정이면 기본값으로 떨어진다
+    /// (`keymap::register_all`이 실제로 등록하는 값과 같은 규칙).
+    fn shortcut_hint(&self, action: &str, cx: &App) -> Option<SharedString> {
+        let settings = &self.state.read(cx).settings;
+        let defaults = sshub_core::settings::default_shortcuts();
+        let combo = settings
+            .shortcuts
+            .get(action)
+            .filter(|c| crate::keymap::is_valid_combo(c))
+            .or_else(|| defaults.get(action))?;
+        Some(SharedString::from(display_combo(combo)))
+    }
+
+    fn open_menu(
+        &mut self,
+        at: Point<Pixels>,
+        items: Vec<ContextMenuItem>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let menu = cx.new(|cx| ContextMenu::new(at, items, cx));
+        let dismiss = cx.subscribe_in(
+            &menu,
+            window,
+            |this: &mut Self, _menu, _: &DismissEvent, window, cx| {
+                this.menu = None;
+                // 항목 동작이 확인 모달을 띄웠다면 포커스를 되찾아 오면 안 된다
+                // — 방금 연 모달에서 포커스를 빼앗는 꼴이 된다.
+                if this.confirm.is_none() {
+                    this.focus_active_pane(window, cx);
+                }
+                cx.notify();
+            },
+        );
+        menu.read(cx).focus(window);
+        self.menu_sub = Some(dismiss);
+        self.menu = Some(menu);
+        cx.notify();
+    }
+
+    /// pane 우클릭 메뉴. 복사/붙여넣기는 **우클릭한 pane**을 대상으로 해야 하므로
+    /// 먼저 그 pane에 포커스를 준다.
+    pub fn open_pane_menu(
+        &mut self,
+        session: SessionId,
+        at: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_pane(session.clone(), window, cx);
+        let lang = self.lang;
+        let this = cx.entity().downgrade();
+        // ⌘C/⌘V는 터미널 뷰가 직접 처리하는 고정 키다(리바인딩 대상 아님).
+        let copy_hint = Some(SharedString::from(display_combo("cmd-c")));
+        let paste_hint = Some(SharedString::from(display_combo("cmd-v")));
+        let split_right_hint = self.shortcut_hint("splitRight", cx);
+        let split_down_hint = self.shortcut_hint("splitDown", cx);
+        let close_hint = self.shortcut_hint("closePane", cx);
+
+        let items = vec![
+            {
+                let this = this.clone();
+                ContextMenuItem::entry(tr(lang, TrKey::ShortcutSplitRight), move |window, cx| {
+                    this.update(cx, |this, cx| this.split(SplitDirection::Row, window, cx)).ok();
+                })
+                .hint(split_right_hint)
+            },
+            {
+                let this = this.clone();
+                ContextMenuItem::entry(tr(lang, TrKey::ShortcutSplitDown), move |window, cx| {
+                    this.update(cx, |this, cx| this.split(SplitDirection::Column, window, cx)).ok();
+                })
+                .hint(split_down_hint)
+            },
+            ContextMenuItem::separator(),
+            {
+                let this = this.clone();
+                let session = session.clone();
+                ContextMenuItem::entry(tr(lang, TrKey::TermCopy), move |_window, cx| {
+                    this.update(cx, |this, cx| {
+                        if let Some(view) = this.views.get(&session).cloned() {
+                            view.update(cx, |view, cx| view.copy(cx));
+                        }
+                    })
+                    .ok();
+                })
+                .hint(copy_hint)
+            },
+            {
+                let this = this.clone();
+                let session = session.clone();
+                ContextMenuItem::entry(tr(lang, TrKey::TermPaste), move |_window, cx| {
+                    this.update(cx, |this, cx| {
+                        if let Some(view) = this.views.get(&session).cloned() {
+                            view.update(cx, |view, cx| view.paste(cx));
+                        }
+                    })
+                    .ok();
+                })
+                .hint(paste_hint)
+            },
+            ContextMenuItem::separator(),
+            {
+                let this = this.clone();
+                let session = session.clone();
+                ContextMenuItem::entry(tr(lang, TrKey::TermReconnect), move |window, cx| {
+                    this.update(cx, |this, cx| this.reconnect_pane(session.clone(), window, cx)).ok();
+                })
+            },
+            ContextMenuItem::entry(tr(lang, TrKey::ShortcutClosePane), move |window, cx| {
+                this.update(cx, |this, cx| this.close_focused_pane(window, cx)).ok();
+            })
+            .hint(close_hint),
+        ];
+        self.open_menu(at, items, window, cx);
+    }
+
+    /// 탭 우클릭 메뉴. **활성 탭을 바꾸지 않는다** — 우클릭한 탭이 대상이다.
+    /// 아무 일도 하지 않을 항목(끝 탭의 "오른쪽 닫기" 등)은 지우지 않고 비활성으로
+    /// 남긴다 — 항목 위치가 흔들리면 근육 기억이 깨진다.
+    pub fn open_tab_menu(
+        &mut self,
+        tab_id: TabId,
+        at: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.tab_index(&tab_id) else {
+            return;
+        };
+        let lang = self.lang;
+        let last = self.tabs.len() - 1;
+        let only_tab = self.tabs.len() <= 1;
+        let this = cx.entity().downgrade();
+
+        let items = vec![
+            {
+                let (this, id) = (this.clone(), tab_id.clone());
+                ContextMenuItem::entry(tr(lang, TrKey::TermCloseTab), move |window, cx| {
+                    this.update(cx, |this, cx| this.close_tab(id.clone(), window, cx)).ok();
+                })
+            },
+            {
+                let (this, id) = (this.clone(), tab_id.clone());
+                ContextMenuItem::entry(tr(lang, TrKey::TermCloseOthers), move |window, cx| {
+                    this.update(cx, |this, cx| this.close_other_tabs(id.clone(), window, cx)).ok();
+                })
+                .disabled(only_tab)
+            },
+            {
+                let (this, id) = (this.clone(), tab_id.clone());
+                ContextMenuItem::entry(tr(lang, TrKey::TermCloseRight), move |window, cx| {
+                    this.update(cx, |this, cx| this.close_tabs_to_the_right(id.clone(), window, cx))
+                        .ok();
+                })
+                .disabled(index == last)
+            },
+            {
+                let (this, id) = (this.clone(), tab_id.clone());
+                ContextMenuItem::entry(tr(lang, TrKey::TermCloseLeft), move |window, cx| {
+                    this.update(cx, |this, cx| this.close_tabs_to_the_left(id.clone(), window, cx))
+                        .ok();
+                })
+                .disabled(index == 0)
+            },
+            ContextMenuItem::separator(),
+            ContextMenuItem::entry(tr(lang, TrKey::TermReconnect), move |window, cx| {
+                this.update(cx, |this, cx| this.reconnect_tab(tab_id.clone(), window, cx)).ok();
+            }),
+        ];
+        self.open_menu(at, items, window, cx);
+    }
+
     // ---- 포커스 -----------------------------------------------------------
 
     pub fn focus_pane(&mut self, session: SessionId, window: &mut Window, cx: &mut Context<Self>) {
@@ -778,6 +988,23 @@ impl TerminalWorkspace {
         if let Some(view) = self.views.get(&first) {
             window.focus(&view.read(cx).focus_handle(cx));
         }
+    }
+
+    /// 탭 직접 선택. `index`가 `None`이면 **마지막 탭**(⌘9의 macOS/Chrome/Zed
+    /// 관례). 없는 번호는 아무 일도 하지 않는다.
+    pub fn select_tab_at(&mut self, index: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        let target = match index {
+            Some(i) => self.tabs.get(i),
+            None => self.tabs.last(),
+        };
+        let Some(id) = target.map(|t| t.id.clone()) else {
+            return;
+        };
+        self.active_tab = Some(id);
+        // 탭만 바꾸고 포커스를 두면 키 입력이 안 보이는 pane으로 흘러간다.
+        self.focus_first_pane(window, cx);
+        self.persist_layout(cx);
+        cx.notify();
     }
 
     /// 방향 포커스 이동 — 현재 탭 안에서 기하적으로 가장 가까운 pane.
@@ -1045,6 +1272,43 @@ impl TerminalWorkspace {
         self.adjust_font(-1.0, cx);
     }
 
+    fn on_select_tab_1(&mut self, _: &SelectTab1, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_tab_at(Some(0), window, cx);
+    }
+
+    fn on_select_tab_2(&mut self, _: &SelectTab2, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_tab_at(Some(1), window, cx);
+    }
+
+    fn on_select_tab_3(&mut self, _: &SelectTab3, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_tab_at(Some(2), window, cx);
+    }
+
+    fn on_select_tab_4(&mut self, _: &SelectTab4, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_tab_at(Some(3), window, cx);
+    }
+
+    fn on_select_tab_5(&mut self, _: &SelectTab5, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_tab_at(Some(4), window, cx);
+    }
+
+    fn on_select_tab_6(&mut self, _: &SelectTab6, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_tab_at(Some(5), window, cx);
+    }
+
+    fn on_select_tab_7(&mut self, _: &SelectTab7, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_tab_at(Some(6), window, cx);
+    }
+
+    fn on_select_tab_8(&mut self, _: &SelectTab8, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_tab_at(Some(7), window, cx);
+    }
+
+    /// ⌘9는 9번째가 아니라 **마지막** 탭이다 (macOS/Chrome/Zed 관례).
+    fn on_select_tab_9(&mut self, _: &SelectTab9, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_tab_at(None, window, cx);
+    }
+
     fn on_focus_left(&mut self, _: &FocusLeft, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_direction(FocusDir::Left, window, cx);
     }
@@ -1095,6 +1359,7 @@ impl TerminalWorkspace {
     fn pane_handlers(&self, cx: &mut Context<Self>) -> Rc<PaneHandlers> {
         let focus_this = cx.entity().downgrade();
         let rename_this = cx.entity().downgrade();
+        let menu_this = cx.entity().downgrade();
         let divider_this = cx.entity().downgrade();
         let drop_pane_this = cx.entity().downgrade();
         let drop_tab_this = cx.entity().downgrade();
@@ -1119,6 +1384,11 @@ impl TerminalWorkspace {
             rename: Box::new(move |session, window, cx| {
                 rename_this
                     .update(cx, |this, cx| this.start_pane_rename(session, window, cx))
+                    .ok();
+            }),
+            context_menu: Box::new(move |session, at, window, cx| {
+                menu_this
+                    .update(cx, |this, cx| this.open_pane_menu(session, at, window, cx))
                     .ok();
             }),
             divider_down: Box::new(move |grab, _window, cx| {
@@ -1158,6 +1428,7 @@ impl TerminalWorkspace {
         let select = cx.entity().downgrade();
         let close = cx.entity().downgrade();
         let rename = cx.entity().downgrade();
+        let tab_menu = cx.entity().downgrade();
         let new_tab = cx.entity().downgrade();
         let drop_tab = cx.entity().downgrade();
         let drop_pane = cx.entity().downgrade();
@@ -1181,6 +1452,11 @@ impl TerminalWorkspace {
             rename: Box::new(move |tab_id, window, cx| {
                 rename
                     .update(cx, |this, cx| this.start_rename(tab_id, window, cx))
+                    .ok();
+            }),
+            context_menu: Box::new(move |tab_id, at, window, cx| {
+                tab_menu
+                    .update(cx, |this, cx| this.open_tab_menu(tab_id, at, window, cx))
                     .ok();
             }),
             new_tab: Box::new(move |window, cx| {
@@ -1316,6 +1592,15 @@ impl Render for TerminalWorkspace {
             .on_action(cx.listener(Self::on_focus_right))
             .on_action(cx.listener(Self::on_focus_up))
             .on_action(cx.listener(Self::on_focus_down))
+            .on_action(cx.listener(Self::on_select_tab_1))
+            .on_action(cx.listener(Self::on_select_tab_2))
+            .on_action(cx.listener(Self::on_select_tab_3))
+            .on_action(cx.listener(Self::on_select_tab_4))
+            .on_action(cx.listener(Self::on_select_tab_5))
+            .on_action(cx.listener(Self::on_select_tab_6))
+            .on_action(cx.listener(Self::on_select_tab_7))
+            .on_action(cx.listener(Self::on_select_tab_8))
+            .on_action(cx.listener(Self::on_select_tab_9))
             .child(tab_bar)
             .child(div().flex_grow().overflow_hidden().child(body));
 
@@ -1327,6 +1612,11 @@ impl Render for TerminalWorkspace {
                 .on_mouse_up(MouseButton::Left, cx.listener(Self::on_divider_up));
         }
 
+        // 컨텍스트 메뉴는 `deferred`로 자기 자신을 최상단에 올린다 —
+        // 여기서는 트리에 매달아 두기만 하면 된다(순서는 z-order와 무관).
+        if let Some(menu) = self.menu.clone() {
+            root = root.child(menu);
+        }
         if let Some(dialog) = self.confirm.clone() {
             root = root.child(ModalOverlay::new(dialog));
         }

@@ -135,3 +135,70 @@ fn dragging_a_tab_onto_another_tabs_pane_merges_it(cx: &mut TestAppContext) {
     assert_eq!(tab_count, 1, "옮겨온 탭은 사라져야 한다");
     assert_eq!(leaves_in_a, 2, "받는 탭이 둘로 분할돼야 한다");
 }
+
+/// ⌘1..⌘9 탭 이동. ⌘9만 "9번째"가 아니라 **마지막 탭**이다(macOS/Chrome/Zed 관례).
+#[gpui::test]
+fn cmd_digit_jumps_to_that_tab_and_cmd_9_to_the_last(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let paths = sshub_core::AppPaths::in_dir(dir.path().to_path_buf());
+    cx.update(|cx| {
+        sshub::state::init_with_paths(paths.clone(), cx);
+        sshub::theme::init(cx);
+        sshub::ui::init(cx);
+        sshub::keymap::register_all(cx, &sshub_core::settings::default_shortcuts());
+        sshub::session_registry::init(&paths, cx);
+    });
+
+    let window = cx.add_window(|window, cx| TerminalWorkspace::new(window, cx));
+    let mut vcx = VisualTestContext::from_window(window.into(), cx);
+    vcx.run_until_parked();
+
+    // 탭 3개 (새 워크스페이스는 1개로 시작한다).
+    for _ in 0..2 {
+        window.update(&mut vcx, |ws, window, cx| ws.new_tab(window, cx)).unwrap();
+    }
+    vcx.run_until_parked();
+
+    let ids = window
+        .update(&mut vcx, |ws, _, _| {
+            ws.tabs().iter().map(|t| t.id.clone()).collect::<Vec<_>>()
+        })
+        .unwrap();
+    assert_eq!(ids.len(), 3);
+
+    vcx.simulate_keystrokes("cmd-2");
+    vcx.run_until_parked();
+    let active = window.update(&mut vcx, |ws, _, _| ws.active_tab_id().cloned()).unwrap();
+    assert_eq!(active.as_ref(), Some(&ids[1]), "⌘2는 두 번째 탭");
+
+    // 탭만 바뀌고 포커스가 따라오지 않으면 키 입력이 안 보이는 pane으로 흘러간다.
+    let focused = window.update(&mut vcx, |ws, _, _| ws.focused_pane().cloned()).unwrap();
+    let second_panes = window
+        .update(&mut vcx, |ws, _, _| {
+            sshub_splits::leaves(&ws.tabs()[1].root)
+                .into_iter()
+                .map(|l| l.session_id.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    assert!(
+        focused.is_some_and(|f| second_panes.contains(&f)),
+        "선택된 탭의 pane이 포커스를 받아야 한다"
+    );
+
+    vcx.simulate_keystrokes("cmd-9");
+    vcx.run_until_parked();
+    let active = window.update(&mut vcx, |ws, _, _| ws.active_tab_id().cloned()).unwrap();
+    assert_eq!(active.as_ref(), Some(&ids[2]), "⌘9는 9번째가 아니라 마지막 탭");
+
+    vcx.simulate_keystrokes("cmd-1");
+    vcx.run_until_parked();
+    let active = window.update(&mut vcx, |ws, _, _| ws.active_tab_id().cloned()).unwrap();
+    assert_eq!(active.as_ref(), Some(&ids[0]), "⌘1은 첫 탭");
+
+    // 없는 번호는 아무 일도 하지 않는다.
+    vcx.simulate_keystrokes("cmd-7");
+    vcx.run_until_parked();
+    let active = window.update(&mut vcx, |ws, _, _| ws.active_tab_id().cloned()).unwrap();
+    assert_eq!(active.as_ref(), Some(&ids[0]), "탭이 없으면 그대로");
+}

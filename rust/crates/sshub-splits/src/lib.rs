@@ -533,6 +533,39 @@ mod tests {
         assert_eq!(tab_ids(&tabs_up_to_inclusive(tabs(&["a", "b"]), &tid("zzz"))), ["a", "b"]);
     }
 
+    // -------- tabs_from_inclusive (왼쪽 전부 닫기) --------
+
+    #[test]
+    fn tabs_from_inclusive_keeps_the_given_tab_and_everything_after_it() {
+        assert_eq!(
+            tab_ids(&tabs_from_inclusive(tabs(&["a", "b", "c", "d"]), &tid("c"))),
+            ["c", "d"]
+        );
+    }
+
+    #[test]
+    fn tabs_from_inclusive_keeps_everything_when_the_target_is_first() {
+        assert_eq!(tab_ids(&tabs_from_inclusive(tabs(&["a", "b"]), &tid("a"))), ["a", "b"]);
+    }
+
+    #[test]
+    fn tabs_from_inclusive_returns_unchanged_for_an_unknown_id() {
+        assert_eq!(tab_ids(&tabs_from_inclusive(tabs(&["a", "b"]), &tid("zzz"))), ["a", "b"]);
+    }
+
+    /// 좌/우 닫기는 서로의 여집합 + 자기 자신이다 — 한쪽만 고치면 어긋난다.
+    #[test]
+    fn left_and_right_close_partition_the_strip_around_the_target() {
+        let all = ["a", "b", "c", "d"];
+        let kept_left = tabs_up_to_inclusive(tabs(&all), &tid("c"));
+        let kept_right = tabs_from_inclusive(tabs(&all), &tid("c"));
+        let left = tab_ids(&kept_left);
+        let right = tab_ids(&kept_right);
+        assert_eq!(left.len() + right.len(), all.len() + 1, "겹치는 건 대상 탭 하나뿐");
+        assert_eq!(*left.last().unwrap(), "c");
+        assert_eq!(*right.first().unwrap(), "c");
+    }
+
     // -------- insert_at_index (tabOps.test.ts 포팅) --------
 
     #[test]

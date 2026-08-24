@@ -3,6 +3,7 @@
 //! 상태 없는 리프 컨트롤은 `RenderOnce`, 포커스/편집 상태를 가지는 것은 Entity 뷰.
 pub mod button;
 pub mod checkbox;
+pub mod context_menu;
 pub mod form;
 pub mod icon;
 pub mod list;
@@ -14,6 +15,7 @@ pub mod toast;
 
 pub use button::{Button, ButtonVariant};
 pub use checkbox::Checkbox;
+pub use context_menu::{ContextMenu, ContextMenuItem};
 pub use form::FormField;
 pub use icon::{icon, Icon};
 pub use list::ListItem;
@@ -33,6 +35,9 @@ use gpui::{App, KeyBinding};
 /// 이 함수를 호출**하며, 위젯 바인딩이 여기 한 곳에만 존재해야 리바인드 후에도
 /// 살아남는다. 위젯 모듈에서 개별적으로 `bind_keys`를 부르지 말 것.
 pub fn init(cx: &mut App) {
+    use context_menu::{
+        ContextMenuCancel, ContextMenuConfirm, ContextMenuDown, ContextMenuUp,
+    };
     use modal::{ConfirmDialogCancel, ConfirmDialogConfirm};
     use select::{SelectCancel, SelectConfirm, SelectDown, SelectFirst, SelectLast, SelectUp};
     use text_area::{
@@ -49,6 +54,7 @@ pub fn init(cx: &mut App) {
     const TEXT_AREA: Option<&str> = Some("TextArea");
     const SELECT: Option<&str> = Some("Select");
     const CONFIRM: Option<&str> = Some("ConfirmDialog");
+    const CONTEXT_MENU: Option<&str> = Some("ContextMenu");
 
     cx.bind_keys([
         // --- TextInput ---
@@ -103,5 +109,10 @@ pub fn init(cx: &mut App) {
         // --- ConfirmDialog ---
         KeyBinding::new("enter", ConfirmDialogConfirm, CONFIRM),
         KeyBinding::new("escape", ConfirmDialogCancel, CONFIRM),
+        // --- ContextMenu ---
+        KeyBinding::new("up", ContextMenuUp, CONTEXT_MENU),
+        KeyBinding::new("down", ContextMenuDown, CONTEXT_MENU),
+        KeyBinding::new("enter", ContextMenuConfirm, CONTEXT_MENU),
+        KeyBinding::new("escape", ContextMenuCancel, CONTEXT_MENU),
     ]);
 }
