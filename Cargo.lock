@@ -5231,7 +5231,7 @@ dependencies = [
 
 [[package]]
 name = "sshub"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "futures",
@@ -5249,7 +5249,7 @@ dependencies = [
 
 [[package]]
 name = "sshub-core"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -5265,7 +5265,7 @@ dependencies = [
 
 [[package]]
 name = "sshub-splits"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -5273,7 +5273,7 @@ dependencies = [
 
 [[package]]
 name = "sshub-terminal"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
