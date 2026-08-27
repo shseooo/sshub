@@ -130,12 +130,11 @@ impl TerminalWorkspace {
         cx: &mut Context<Self>,
     ) -> Self {
         let state = app_state(cx);
-        let (paths, settings_lang, layout, font_size) = {
+        let (paths, settings_lang, font_size) = {
             let state = state.read(cx);
             (
                 state.paths.clone(),
                 state.settings.language.clone(),
-                state.settings.terminal_layout.clone(),
                 state.settings.appearance.terminal.font_size,
             )
         };
@@ -192,8 +191,14 @@ impl TerminalWorkspace {
             _subscriptions: vec![state_sub],
         };
 
-        // 창 시드가 있으면 그것이 진실 — 설정의 단일 레이아웃은 무시한다.
-        let layout = seed.or(layout);
+        // 시드가 곧 이 창의 전부다. 없으면 **빈 창**으로 시작한다.
+        //
+        // 예전에는 시드가 없을 때 설정의 단일 레이아웃으로 되돌아갔는데, 그러면
+        // ⌘N으로 연 새 창이 기존 창과 **같은 session id**를 복원해 두 창이 하나의
+        // 터미널을 공유했다. 한쪽에서 탭을 닫으면 공유 PTY가 죽어 다른 창의 탭이
+        // 먹통이 됐다. 시작 시 복원은 window_manager가 창마다 시드를 주므로
+        // 이 폴백은 필요 없다.
+        let layout = seed;
         if let Some((tabs, active)) = layout.as_ref().and_then(load_layout) {
             workspace.tabs = tabs;
             workspace.active_tab = active;
@@ -287,8 +292,9 @@ impl TerminalWorkspace {
 
     /// 새 로컬 탭 — 포커스된 pane의 cwd를 물려받는다.
     pub fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let cwd_from = self.focused_pane.clone();
-        self.push_local_tab(cwd_from);
+        // 새 탭은 항상 홈에서 시작한다. cwd 상속은 **분할**의 사양이다 —
+        // 분할은 "지금 이 작업을 옆에서 계속"이지만, 새 탭은 새 작업이다.
+        self.push_local_tab(None);
         self.sync_sessions(window, cx);
         self.focus_active_pane(window, cx);
         self.persist_layout(cx);

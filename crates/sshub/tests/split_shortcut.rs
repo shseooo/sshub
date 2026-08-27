@@ -311,3 +311,93 @@ fn entering_the_terminal_page_makes_tab_shortcuts_work_without_clicking(cx: &mut
         .unwrap();
     assert!(active_is_first, "터미널 진입 직후 ⌘1이 먹지 않았다");
 }
+
+/// ⌘N으로 연 새 창은 기존 창과 **다른 터미널**이어야 한다.
+///
+/// 예전에는 시드가 없으면 설정에 저장된 레이아웃으로 되돌아가 같은 session id를
+/// 복원했다. 두 창이 하나의 PTY를 공유해, 한쪽에서 탭을 닫으면 다른 창의 탭이
+/// 먹통이 됐다. 실제 앱에서는 창 매니저가 첫 창의 레이아웃을 설정에 저장하므로
+/// 그 상태를 직접 만들어 재현한다.
+#[gpui::test]
+fn a_new_window_does_not_adopt_the_saved_layout(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let paths = sshub_core::AppPaths::in_dir(dir.path().to_path_buf());
+    cx.update(|cx| {
+        sshub::state::init_with_paths(paths.clone(), cx);
+        sshub::theme::init(cx);
+        sshub::ui::init(cx);
+        sshub::keymap::register_all(cx, &sshub_core::settings::default_shortcuts());
+        sshub::session_registry::init(&paths, cx);
+        // 이미 실행 중인 창이 자기 레이아웃을 저장해 둔 상태.
+        let state = sshub::state::app_state(cx);
+        state.update(cx, |state, cx| {
+            state.update_settings(
+                |s| {
+                    s.terminal_layout = Some(serde_json::json!({
+                        "tabs": [{ "root": {
+                            "type": "leaf",
+                            "sessionId": "already-open-session",
+                            "serverId": null,
+                            "label": "local"
+                        }}],
+                        "activeIndex": 0
+                    }));
+                },
+                cx,
+            );
+        });
+    });
+
+    let window = cx.add_window(|window, cx| TerminalWorkspace::new(window, cx));
+    let mut vcx = VisualTestContext::from_window(window.into(), cx);
+    vcx.run_until_parked();
+
+    let ids: Vec<String> = window
+        .update(&mut vcx, |ws, _, _| {
+            ws.tabs()
+                .iter()
+                .flat_map(|t| sshub_splits::leaves(&t.root))
+                .map(|l| l.session_id.as_str().to_string())
+                .collect()
+        })
+        .unwrap();
+
+    assert_eq!(ids.len(), 1, "새 창은 빈 탭 하나로 시작한다: {ids:?}");
+    assert!(
+        !ids.contains(&"already-open-session".to_string()),
+        "새 창이 다른 창의 세션을 그대로 물려받았다: {ids:?}"
+    );
+}
+
+/// ⌘T로 만든 새 탭은 홈에서 시작한다 (cwd 상속은 분할의 사양).
+#[gpui::test]
+fn a_new_tab_starts_at_home_not_the_current_directory(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let paths = sshub_core::AppPaths::in_dir(dir.path().to_path_buf());
+    cx.update(|cx| {
+        sshub::state::init_with_paths(paths.clone(), cx);
+        sshub::theme::init(cx);
+        sshub::ui::init(cx);
+        sshub::keymap::register_all(cx, &sshub_core::settings::default_shortcuts());
+        sshub::session_registry::init(&paths, cx);
+    });
+
+    let window = cx.add_window(|window, cx| TerminalWorkspace::new(window, cx));
+    let mut vcx = VisualTestContext::from_window(window.into(), cx);
+    vcx.run_until_parked();
+
+    window.update(&mut vcx, |ws, window, cx| ws.new_tab(window, cx)).unwrap();
+    vcx.run_until_parked();
+    let inherits_from = window
+        .update(&mut vcx, |ws, _, _| {
+            let tab = ws.tabs().last().expect("새 탭");
+            sshub_splits::leaves(&tab.root)[0].cwd_from_session.clone()
+        })
+        .unwrap();
+    assert!(inherits_from.is_none(), "새 탭이 현재 경로를 물려받았다");
+
+    // 분할 쪽 상속 규칙은 `session::resolve_local_cwd` 단위 테스트가 지킨다.
+    // 여기서 같이 확인하지 않는 이유: 상속원(`cwd_from_session`)은 세션이 뜨는
+    // 순간 소비돼 지워지므로(두 번째 spawn이 남의 디렉터리를 물려받지 않도록)
+    // 밖에서 관찰할 수 없다.
+}
