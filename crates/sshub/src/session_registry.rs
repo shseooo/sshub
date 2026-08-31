@@ -402,6 +402,45 @@ mod tests {
         });
     }
 
+    /// 회귀 방지: 스크롤백이 **종료 훅에만** 의존하면 강제 종료·크래시에서
+    /// 히스토리가 통째로 사라진다. 출력이 멎으면 디바운스 뒤 저장돼야 한다
+    /// (DESIGN-terminal.md §7).
+    #[gpui::test]
+    fn output_arms_a_debounced_save_so_history_survives_a_crash(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths(dir.path());
+        let registry = cx.update(|cx| cx.new(|_| SessionRegistry::new(&paths)));
+        let id = SessionId::new("s1");
+        let terminal = registry
+            .update(cx, |reg, cx| reg.start(&id, None, None, cx))
+            .expect("세션");
+
+        // 한 번도 그려지지 않은 터미널은 저장하지 않는 게 사양이다(§7 no-clobber).
+        // 여기서는 화면에 떴다고 치고 저장 경로만 본다.
+        terminal.update(cx, |t, _| {
+            t.hydrated = true;
+            t.inject_local(b"hello-from-the-pty\r\n");
+        });
+
+        // 셸이 뜨고 출력이 오갈 **실시간**을 흘려보낸다. 테스트 executor의
+        // 타이머는 가상 시계라 디바운스는 따로 감아 준다.
+        for _ in 0..40 {
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        cx.run_until_parked();
+        cx.executor().advance_clock(SCROLLBACK_DEBOUNCE * 2);
+        cx.run_until_parked();
+
+        let saved = registry.update(cx, |reg, _| {
+            reg.scrollback.as_ref().unwrap().load(id.as_str())
+        });
+        assert!(
+            saved.is_some_and(|text| !text.is_empty()),
+            "출력이 멎으면 디바운스 뒤에 스크롤백이 저장돼야 한다",
+        );
+    }
+
     #[gpui::test]
     fn a_never_shown_terminal_does_not_clobber_saved_history(cx: &mut TestAppContext) {
         let dir = tempfile::tempdir().unwrap();
