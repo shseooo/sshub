@@ -1,6 +1,6 @@
 //! Zed풍 미니멀 다크 테마 토큰 (DESIGN-ui.md §4). dark 전용.
 //! 어센트/터미널 fg·bg/반투명은 설정에서 오버라이드된다.
-use gpui::{rgb, Hsla, Rgba};
+use gpui::{rgb, Hsla, Rgba, SharedString};
 
 /// 반투명 슬라이더 상한(%). 이 위로는 글자가 배경에 묻혀 읽히지 않는다.
 pub const TRANSLUCENCY_MAX: u8 = 40;
@@ -37,7 +37,11 @@ pub struct Theme {
 #[derive(Clone, Debug)]
 pub struct TerminalTheme {
     /// 터미널 고정폭 폰트 패밀리 (기본은 내장 D2Coding — `crate::fonts`).
-    pub font_family: String,
+    ///
+    /// `SharedString`인 이유: 위젯이 렌더마다 `Theme`를 통째로 클론한다. 나머지
+    /// 필드는 전부 Copy라, 이 하나만 `String`이면 프레임마다 위젯 수만큼 힙
+    /// 할당이 생긴다. Arc 백업이라 클론이 refcount 증가로 끝난다.
+    pub font_family: SharedString,
     pub foreground: Rgba,
     /// 터미널 표면 색 — 반투명 알파가 구워져 있다. 창 배경이 비치는 곳은
     /// 사실상 여기뿐이라(터미널이 창의 대부분을 덮는다) 효과가 읽히는 층이다.
@@ -65,7 +69,7 @@ pub const ACCENT_PRESETS: [(&str, u32); 4] = [
 
 impl Theme {
     pub fn default_dark() -> Self {
-        Self::with_overrides(0x74ade8, 0, None, None, 14.0, crate::fonts::EMBEDDED_FAMILY.to_string())
+        Self::with_overrides(0x74ade8, 0, None, None, 14.0, crate::fonts::EMBEDDED_FAMILY.into())
     }
 
     pub fn with_overrides(
@@ -74,7 +78,7 @@ impl Theme {
         term_fg: Option<u32>,
         term_bg: Option<u32>,
         term_font_size: f32,
-        term_font_family: String,
+        term_font_family: SharedString,
     ) -> Self {
         let translucency = translucency.min(TRANSLUCENCY_MAX);
         let alpha = translucency_alpha(translucency);
@@ -161,7 +165,21 @@ mod tests {
     use super::*;
 
     fn theme_with(translucency: u8) -> Theme {
-        Theme::with_overrides(0x74ade8, translucency, None, None, 14.0, "mono".to_string())
+        Theme::with_overrides(0x74ade8, translucency, None, None, 14.0, "mono".into())
+    }
+
+    /// 폰트 패밀리·크기는 설정이 진실이고 테마가 그대로 실어 나른다.
+    /// (클론 비용을 줄이려 타입을 바꿔도 이 통로는 그대로여야 한다.)
+    #[test]
+    fn the_terminal_font_comes_through_untouched() {
+        let t = Theme::with_overrides(0x74ade8, 0, None, None, 15.5, "SF Mono".into());
+        assert_eq!(t.terminal.font_family, "SF Mono");
+        assert_eq!(t.terminal.font_size, 15.5);
+
+        // 클론은 값이 같아야 한다 — 위젯이 렌더마다 테마를 복제한다.
+        let copy = t.clone();
+        assert_eq!(copy.terminal.font_family, t.terminal.font_family);
+        assert_eq!(copy.terminal.palette, t.terminal.palette);
     }
 
     #[test]
@@ -210,7 +228,7 @@ mod tests {
     /// 반투명이어도 색상 자체는 그대로여야 한다(알파만 다른 같은 색).
     #[test]
     fn terminal_background_keeps_its_colour_when_translucent() {
-        let t = Theme::with_overrides(0x74ade8, 40, None, Some(0x102030), 14.0, "mono".to_string());
+        let t = Theme::with_overrides(0x74ade8, 40, None, Some(0x102030), 14.0, "mono".into());
         let (a, b) = (t.terminal.background, t.terminal.background_opaque);
         assert_eq!((a.r, a.g, a.b), (b.r, b.g, b.b));
         assert_eq!(b.a, 1.0);

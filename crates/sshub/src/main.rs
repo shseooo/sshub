@@ -159,7 +159,7 @@ fn apply_appearance(settings: &Settings, cx: &mut App) {
         fonts::resolve_family(
             settings.appearance.terminal.font_family.as_deref(),
             embedded_font_ok(cx),
-        ),
+        ).into(),
     ));
 }
 

@@ -12,7 +12,7 @@ use std::rc::Rc;
 use gpui::{
     div, App, AppContext, Bounds, ClipboardItem, Context, Entity, EntityInputHandler, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, IntoElement, KeyDownEvent, Keystroke,
-    ParentElement, Pixels, Render, Styled, Subscription, UTF16Selection, Window,
+    ParentElement, Pixels, Render, SharedString, Styled, Subscription, UTF16Selection, Window,
 };
 use sshub_terminal::{Event as TerminalEvent, LinkTarget, SpawnSpec, Terminal, TerminalBuilder};
 
@@ -50,7 +50,7 @@ pub struct TerminalView {
     terminal: Entity<Terminal>,
     focus_handle: FocusHandle,
     ime: Option<ImeState>,
-    font_family: String,
+    font_family: SharedString,
     /// 마지막으로 페인트된 엘리먼트 영역 — `bounds_for_range`가 쓴다.
     last_bounds: Option<Bounds<Pixels>>,
     /// 로컬 세션인가 — 경로 링크(Finder 열기)는 로컬에서만 의미가 있다.
@@ -90,7 +90,7 @@ impl TerminalView {
             focus_handle,
             ime: None,
             // 빈 값 = 테마(설정)를 따른다. `set_font_family`로 pane별 고정도 가능.
-            font_family: String::new(),
+            font_family: SharedString::default(),
             last_bounds: None,
             local: true,
             broadcast: None,
@@ -113,7 +113,7 @@ impl TerminalView {
         &self.terminal
     }
 
-    pub fn set_font_family(&mut self, family: impl Into<String>) {
+    pub fn set_font_family(&mut self, family: impl Into<SharedString>) {
         self.font_family = family.into();
     }
 
@@ -414,11 +414,13 @@ impl EntityInputHandler for TerminalView {
 /// pane별 고정값이 있으면 그것을, 없으면 테마(=설정)를 따른다. 생성 시점 값을
 /// 들고 있으면 설정에서 폰트를 바꿔도 이미 열린 터미널은 안 바뀐다 — 크기·색은
 /// 테마 경로를 타는데 패밀리만 예외였던 것이 실제 버그였다.
-pub fn effective_font_family(pane_override: &str, theme_family: &str) -> String {
+pub fn effective_font_family(pane_override: &str, theme_family: &SharedString) -> SharedString {
     if pane_override.trim().is_empty() {
-        theme_family.to_string()
+        // 테마 값은 Arc 백업이라 클론이 refcount 증가로 끝난다 — 렌더마다 도는
+        // 자리라 여기서 String을 새로 만들면 프레임마다 pane 수만큼 할당된다.
+        theme_family.clone()
     } else {
-        pane_override.to_string()
+        SharedString::from(pane_override.to_string())
     }
 }
 
@@ -464,10 +466,12 @@ mod tests {
     #[test]
     fn font_family_follows_the_theme_unless_a_pane_pins_one() {
         // 설정에서 폰트를 바꾸면 이미 열린 pane도 따라와야 한다.
-        assert_eq!(effective_font_family("", "D2Coding"), "D2Coding");
-        assert_eq!(effective_font_family("   ", "Menlo"), "Menlo");
+        let d2 = SharedString::from("D2Coding");
+        let menlo = SharedString::from("Menlo");
+        assert_eq!(effective_font_family("", &d2), "D2Coding");
+        assert_eq!(effective_font_family("   ", &menlo), "Menlo");
         // pane별 고정값은 존중한다.
-        assert_eq!(effective_font_family("SF Mono", "D2Coding"), "SF Mono");
+        assert_eq!(effective_font_family("SF Mono", &d2), "SF Mono");
     }
 
     #[test]

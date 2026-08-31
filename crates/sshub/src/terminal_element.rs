@@ -16,7 +16,7 @@ use gpui::{
     ElementId, ElementInputHandler, Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId,
     Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ScrollWheelEvent,
-    ShapedLine, Size, Style, TextRun, UnderlineStyle, Window,
+    ShapedLine, SharedString, Size, Style, TextRun, UnderlineStyle, Window,
 };
 use sshub_terminal::backend::{AlacColor, Flags, Match, NamedColor, SelectionRange};
 use sshub_terminal::{IndexedCell, Terminal, TerminalBounds, TerminalContent};
@@ -362,7 +362,7 @@ pub struct TerminalElement {
     focus: FocusHandle,
     focused: bool,
     theme: TerminalTheme,
-    font_family: String,
+    font_family: SharedString,
 }
 
 /// prepaint가 만들어 paint가 소비하는 한 프레임짜리 레이아웃.
@@ -395,14 +395,14 @@ impl TerminalElement {
         focus: FocusHandle,
         focused: bool,
         theme: TerminalTheme,
-        font_family: String,
+        font_family: SharedString,
     ) -> TerminalElement {
         TerminalElement { terminal, view, focus, focused, theme, font_family }
     }
 
     fn font(&self) -> Font {
         Font {
-            family: self.font_family.clone().into(),
+            family: self.font_family.clone(),
             features: Default::default(),
             fallbacks: None,
             weight: FontWeight::NORMAL,
@@ -588,7 +588,7 @@ impl Element for TerminalElement {
         let terminal_bounds = TerminalBounds::new(line_height, cell_width, bounds.size);
 
         // 프레임당 lock 1회: 크기 반영 + 스냅샷.
-        let (content, matches, hovered) = self.terminal.update(cx, |terminal, cx| {
+        self.terminal.update(cx, |terminal, cx| {
             terminal.set_size(terminal_bounds);
             // 첫 실제 레이아웃 = hydration 완료 (DESIGN-terminal.md §7).
             // 이 플래그가 서야 세션 계층이 스크롤백을 저장한다 — 한 번도 뜨지
@@ -597,12 +597,16 @@ impl Element for TerminalElement {
                 terminal.hydrated = true;
             }
             terminal.sync(cx);
-            (
-                terminal.last_content.clone(),
-                terminal.matches().to_vec(),
-                terminal.hovered_link().cloned(),
-            )
         });
+
+        // 스냅샷은 방금 `sync`가 만든 것이다 — **복제하지 않고 빌려 쓴다**.
+        // `IndexedCell`이 40바이트라 200x60 그리드면 프레임마다 469KB를 복사하게
+        // 되고(60fps에서 27MB/s), 분할이 넷이면 그 네 배다. 이 아래로 `cx`는
+        // 불변으로만 쓰이므로(`self.view.read`) 빌린 채로 끝까지 간다.
+        let terminal = self.terminal.read(cx);
+        let content = &terminal.last_content;
+        let matches = terminal.matches();
+        let hovered = terminal.hovered_link();
 
         let tb = content.terminal_bounds;
         let screen_lines = tb.screen_lines();
@@ -625,12 +629,12 @@ impl Element for TerminalElement {
         // 2) 검색 매치 / 3) 선택
         let mut match_color = rgba_to_hsla(self.theme.foreground);
         match_color.a = 0.22;
-        let match_quads = Self::match_quads(&matches, &content, &bounds, match_color);
+        let match_quads = Self::match_quads(matches, content, &bounds, match_color);
 
         let mut selection_color = rgba_to_hsla(self.theme.cursor);
         selection_color.a = 0.30;
         let selection_quads = match &content.selection {
-            Some(range) => Self::selection_quads(range, &content, &bounds, selection_color),
+            Some(range) => Self::selection_quads(range, content, &bounds, selection_color),
             None => Vec::new(),
         };
 
@@ -666,7 +670,7 @@ impl Element for TerminalElement {
 
         // cmd-호버 링크 밑줄
         let mut link_underlines = Vec::new();
-        if let Some(link) = hovered.as_ref() {
+        if let Some(link) = hovered {
             let line = link.range.start().line.0;
             if let Some(row) = Self::viewport_line(line, content.display_offset, screen_lines) {
                 let from = link.range.start().column.0;
@@ -691,13 +695,7 @@ impl Element for TerminalElement {
         let cursor = if ime_text.is_some() {
             None
         } else {
-            build_cursor(
-                self,
-                &content,
-                &bounds,
-                font_size,
-                window,
-            )
+            build_cursor(self, content, &bounds, font_size, window)
         };
 
         // 6) IME 조합 오버레이 — 커서 그리드 위치에 터미널 폰트로.

@@ -128,7 +128,7 @@ fn apply_theme(settings: &Settings, cx: &mut App) {
         crate::fonts::resolve_family(
             settings.appearance.terminal.font_family.as_deref(),
             true,
-        ),
+        ).into(),
     ));
     // 전역 테마를 바꿔도 다른 창은 자기 이벤트가 없으면 다시 그리지 않는다.
     // 반투명은 `Workspace::render`에서 플랫폼 창에 적용되므로, 열려 있는 창을
