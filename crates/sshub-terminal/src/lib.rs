@@ -801,6 +801,11 @@ impl Terminal {
         self.serialize_scrollback(PERSISTED_SCROLLBACK_LINES)
     }
 
+    /// 마지막 `max_lines` 행의 평문 — 탭을 끌 때 보여 주는 미리보기용.
+    pub fn tail_lines(&self, max_lines: usize) -> Vec<String> {
+        scrollback::plain_tail(&self.term.lock(), max_lines)
+    }
+
     /// **블로킹 가능** — background executor에서 호출할 것.
     pub fn refresh_cwd(&mut self) -> Option<String> {
         self.pty_info.refresh_cwd()

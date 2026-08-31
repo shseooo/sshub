@@ -50,6 +50,16 @@ pub struct TabDrag {
     pub tab_id: TabId,
 }
 
+/// 지금 끌고 있는 탭 (앱 스코프).
+///
+/// gpui는 `App::active_drag`를 공개하지 않아서 드롭 시점에 페이로드를 다시
+/// 읽을 수 없다. 창 밖 드롭은 어떤 `on_drop`도 타지 않으므로(드롭 대상이
+/// 없다) 창 셸이 mouse-up을 직접 받아 처리해야 하고, 그때 "무엇을 끌고
+/// 있었는지"의 유일한 출처가 이 전역이다. 드래그 시작에서 쓰고, 창 셸이
+/// mouse-up마다 지운다.
+pub struct ActiveTabDrag(pub TabId);
+impl gpui::Global for ActiveTabDrag {}
+
 /// pane을 끌고 있음 — 다른 pane에 놓으면 이동, 탭바에 놓으면 새 탭으로 분리.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PaneDrag {
@@ -275,6 +285,11 @@ pub struct DragGhost {
 
 impl gpui::Render for DragGhost {
     fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        // 화면 전체를 덮는 고스트 패널이 떠 있으면 여기서는 아무것도 그리지
+        // 않는다 — 둘 다 그리면 창 안에서만 미리보기가 두 겹으로 보인다.
+        if crate::drag_ghost::is_active(cx) {
+            return div().into_any_element();
+        }
         let theme = crate::theme::theme(cx);
         div()
             .px_2()
@@ -286,6 +301,7 @@ impl gpui::Render for DragGhost {
             .text_xs()
             .text_color(theme.text)
             .child(self.label.clone())
+            .into_any_element()
     }
 }
 

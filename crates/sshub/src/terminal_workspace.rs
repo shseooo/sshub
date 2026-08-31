@@ -25,6 +25,7 @@ use sshub_splits::{
 };
 use sshub_terminal::search::SearchQuery;
 
+use crate::drag_ghost;
 use crate::i18n::{tr, Lang, TrKey};
 use crate::keymap::{
     display_combo, ClosePane, FocusDown, FocusLeft, FocusRight, FocusUp, FontDecrease,
@@ -42,6 +43,7 @@ use crate::tab_bar::{drop_boundary, render_tab_bar, TabBarCtx, TabBarHandlers};
 use crate::terminal_view::{BroadcastInput, BroadcastSink, TerminalView};
 use crate::theme::{theme, Theme};
 use crate::ui::{ConfirmDialog, ContextMenu, ContextMenuItem, ModalOverlay, TextInput};
+use crate::workspace::MoveTabToNewWindow;
 
 /// 검색 매치 상한 — 화면 하이라이트용이라 무제한으로 모을 이유가 없다.
 const MAX_SEARCH_MATCHES: usize = 1000;
@@ -101,6 +103,9 @@ pub struct TerminalWorkspace {
     pane_rename: Option<(SessionId, Entity<TextInput>)>,
     /// 드래그가 지나가는 pane과 삽입 방향 — 드롭 미리보기의 유일한 근거.
     drag_over: Option<(SessionId, DropSide)>,
+    /// 지금 놓으면 탭이 들어갈 자리 (탭바 캐럿). 다른 창에서 끌고 오는 경우엔
+    /// 그 창이 밀어 넣어 준다 — 목적 창은 드래그 중 마우스 이벤트를 못 받는다.
+    tab_insert: Option<usize>,
     confirm: Option<Entity<ConfirmDialog>>,
     /// 열려 있는 우클릭 메뉴 (pane·탭 공용 — 동시에 둘은 뜨지 않는다).
     menu: Option<Entity<ContextMenu>>,
@@ -183,6 +188,7 @@ impl TerminalWorkspace {
             rename: None,
             pane_rename: None,
             drag_over: None,
+            tab_insert: None,
             confirm: None,
             menu: None,
             menu_sub: None,
@@ -232,6 +238,11 @@ impl TerminalWorkspace {
 
     pub fn is_broadcasting(&self, tab: &TabId) -> bool {
         self.broadcast_tabs.contains(tab)
+    }
+
+    /// 지금 탭바에 서 있는 삽입 캐럿의 위치 (테스트·표시 확인용).
+    pub fn tab_insert(&self) -> Option<usize> {
+        self.tab_insert
     }
 
     pub fn pane_search(&self, session: &SessionId) -> Option<&PaneSearch> {
@@ -674,6 +685,24 @@ impl TerminalWorkspace {
     /// 드래그 호버 갱신. pane은 **자기 자신에 대해서만** 보고하므로, 이탈
     /// 보고는 현재 하이라이트가 그 pane일 때만 지운다 — 그래야 리스너 호출
     /// 순서(들어온 pane이 먼저인지 나간 pane이 먼저인지)와 무관하게 안정적이다.
+    /// 탭바 캐럿을 어디에 그릴지 (`None`이면 감춘다).
+    ///
+    /// 창 밖에서 끌고 오는 경우 목적 창은 드래그 중 마우스 이벤트를 받지 못하므로
+    /// (macOS implicit capture), 소스 창이 이 메서드로 밀어 넣는다.
+    pub fn set_tab_insert(&mut self, at: Option<usize>, cx: &mut Context<Self>) {
+        let at = at.filter(|index| *index <= self.tabs.len());
+        if self.tab_insert != at {
+            self.tab_insert = at;
+            cx.notify();
+        }
+    }
+
+    /// 창 좌표 x → 캐럿 위치. 탭바 밖(`None`)이면 감춘다.
+    pub fn set_tab_insert_at_x(&mut self, x: Option<Pixels>, cx: &mut Context<Self>) {
+        let at = x.map(|x| self.tab_boundary_for_x(x));
+        self.set_tab_insert(at, cx);
+    }
+
     fn set_drag_over(&mut self, session: SessionId, side: Option<DropSide>, cx: &mut Context<Self>) {
         let next = match side {
             Some(side) => Some((session, side)),
@@ -688,6 +717,7 @@ impl TerminalWorkspace {
 
     fn reorder_or_detach_on_tab_bar(&mut self, boundary: usize, drag: Option<TabDrag>, pane: Option<PaneDrag>, window: &mut Window, cx: &mut Context<Self>) {
         self.drag_over = None;
+        self.tab_insert = None;
         if let Some(TabDrag { tab_id }) = drag {
             self.tabs = reorder_tabs(std::mem::take(&mut self.tabs), &tab_id, boundary);
         } else if let Some(PaneDrag { tab_id, session_id }) = pane {
@@ -717,6 +747,7 @@ impl TerminalWorkspace {
         // 미리보기는 여기서 소임을 다한다 — 다음 드래그가 첫 이동 이벤트를
         // 받기 전에 옛 하이라이트가 깜빡이지 않도록 즉시 지운다.
         self.drag_over = None;
+        self.tab_insert = None;
         let Some(dst_tab) = self.tab_of_pane(&target) else {
             return;
         };
@@ -960,6 +991,22 @@ impl TerminalWorkspace {
                 .disabled(index == 0)
             },
             ContextMenuItem::separator(),
+            {
+                let (this, id) = (this.clone(), tab_id.clone());
+                ContextMenuItem::entry(tr(lang, TrKey::TermMoveToNewWindow), move |window, cx| {
+                    // 이동 대상은 **활성 탭**이므로(창 셸의 액션) 먼저 활성화한다.
+                    this.update(cx, |this, cx| {
+                        this.active_tab = Some(id.clone());
+                        this.focus_active_pane(window, cx);
+                        cx.notify();
+                    })
+                    .ok();
+                    // 액션은 포커스 경로로 올라가 창 셸이 받는다. 메뉴 dismiss가
+                    // 같은 프레임에 포커스를 되돌리므로 다음 프레임까지 미룬다.
+                    window.dispatch_action(Box::new(MoveTabToNewWindow), cx);
+                })
+                .disabled(only_tab)
+            },
             ContextMenuItem::entry(tr(lang, TrKey::TermReconnect), move |window, cx| {
                 this.update(cx, |this, cx| this.reconnect_tab(tab_id.clone(), window, cx)).ok();
             }),
@@ -1235,19 +1282,23 @@ impl TerminalWorkspace {
         save_layout(&self.tabs, self.active_tab.as_ref())
     }
 
-    /// 활성 탭을 이 창에서 **떼어낸다** — 세션은 죽이지 않는다.
+    /// 탭 하나를 이 창에서 **떼어낸다** — 세션은 죽이지 않는다.
     ///
     /// 다른 창으로 옮기기 위한 경로라 `close_tab`과 결정적으로 다르다:
     /// `SessionRegistry::close`는 PTY를 kill하고 스크롤백까지 지우므로 절대
     /// 부르면 안 되고, 뷰만 버린다. `Entity<Terminal>`은 앱 스코프 레지스트리가
     /// 계속 들고 있으므로 새 창이 같은 session id로 다시 붙으면 PTY·grid가
     /// 그대로 살아 있다 (DESIGN-terminal.md §8).
-    pub fn detach_active_tab(
+    ///
+    /// 마지막 탭을 떼면 이 창은 **빈 채로 남는다** — 창을 닫을지 기본 탭을
+    /// 채울지는 창 셸이 정한다(드래그로 옮기면 닫고, 메뉴로 옮기면 채운다).
+    pub fn take_tab(
         &mut self,
+        tab_id: &TabId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<TerminalTab> {
-        let index = self.active_index()?;
+        let index = self.tab_index(tab_id)?;
         let tab = self.tabs.remove(index);
         self.broadcast_tabs.remove(&tab.id);
         for leaf in leaves(&tab.root) {
@@ -1260,15 +1311,84 @@ impl TerminalWorkspace {
                 .active_index()
                 .and_then(|i| leaves(&self.tabs[i].root).first().map(|l| l.session_id.clone()));
         }
-        // 창을 빈 채로 두지 않는다 — 탭 0개인 창은 조작할 수단이 없다.
-        if self.tabs.is_empty() {
-            self.push_local_tab(None);
-        }
         self.sync_sessions(window, cx);
         self.focus_active_pane(window, cx);
         self.persist_layout(cx);
         cx.notify();
         Some(tab)
+    }
+
+    /// 활성 탭을 떼어낸다. 창이 비면 기본 탭을 채운다 — 메뉴/단축키 경로는
+    /// 창을 닫지 않으므로 탭 0개인 창(조작할 수단이 없다)을 남기면 안 된다.
+    pub fn detach_active_tab(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<TerminalTab> {
+        let id = self.active_tab.clone()?;
+        let tab = self.take_tab(&id, window, cx)?;
+        if self.tabs.is_empty() {
+            self.push_local_tab(None);
+            self.sync_sessions(window, cx);
+            self.focus_active_pane(window, cx);
+            self.persist_layout(cx);
+            cx.notify();
+        }
+        Some(tab)
+    }
+
+    /// 다른 창에서 넘어온 탭을 받는다 (`at`은 탭 배열 삽입 경계, `None`이면 끝).
+    ///
+    /// 탭/split id는 이 창에서 새로 발급하지만 **세션 id는 그대로 둔다** —
+    /// `start_leaf`가 레지스트리에서 살아 있는 PTY를 찾아 뷰만 새로 붙인다.
+    pub fn receive_tab(
+        &mut self,
+        mut tab: TerminalTab,
+        at: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        tab.id = TabId::new(new_id());
+        revive_ids(
+            &mut tab.root,
+            &mut || SessionId::new(new_id()),
+            &mut || SplitId::new(new_id()),
+        );
+        // 넘어온 탭은 이미 살아 있는 세션이다 — 상속원이 남아 있으면 재기동 시
+        // 남의 디렉터리를 물려받는다.
+        clear_cwd_sources(&mut tab.root);
+
+        self.tab_insert = None;
+        let id = tab.id.clone();
+        let first_pane = leaves(&tab.root).first().map(|l| l.session_id.clone());
+        self.tabs = insert_tab(std::mem::take(&mut self.tabs), tab, at);
+        self.active_tab = Some(id);
+        self.focused_pane = first_pane;
+        self.sync_sessions(window, cx);
+        self.focus_active_pane(window, cx);
+        self.persist_layout(cx);
+        cx.notify();
+    }
+
+    /// 이 탭을 끌 때 보여 줄 미리보기 — 제목 + 첫 pane의 마지막 몇 줄.
+    ///
+    /// **스냅샷**이다. 살아 있는 `TerminalView`를 고스트에 그리면 그 pane의
+    /// PTY가 카드 크기로 리사이즈돼(터미널은 그려진 크기가 곧 `set_size`다)
+    /// 드래그만 했는데 화면이 재배치된다.
+    fn ghost_content(&self, tab_id: &TabId, cx: &App) -> Option<drag_ghost::GhostContent> {
+        let tab = self.tabs.iter().find(|t| t.id == *tab_id)?;
+        let title = tab_title(tab).to_string();
+        let lines = leaves(&tab.root)
+            .first()
+            .and_then(|leaf| self.registry.read(cx).get(&leaf.session_id))
+            .map(|terminal| terminal.read(cx).tail_lines(drag_ghost::PREVIEW_LINES))
+            .unwrap_or_default();
+        Some(drag_ghost::GhostContent::new(title, lines))
+    }
+
+    /// 창 좌표 x → 탭 삽입 경계. 창을 넘어온 드롭도 같은 규칙을 쓴다.
+    pub fn tab_boundary_for_x(&self, x: Pixels) -> usize {
+        drop_boundary(&self.tab_bounds(), x)
     }
 
     /// 앱 종료 경로 (§6): 라이브 cwd 스냅샷 → 스크롤백 flush → PTY kill.
@@ -1464,6 +1584,8 @@ impl TerminalWorkspace {
         let rename = cx.entity().downgrade();
         let tab_menu = cx.entity().downgrade();
         let new_tab = cx.entity().downgrade();
+        let drag_start = cx.entity().downgrade();
+        let drag_over_bar = cx.entity().downgrade();
         let drop_tab = cx.entity().downgrade();
         let drop_pane = cx.entity().downgrade();
 
@@ -1495,6 +1617,23 @@ impl TerminalWorkspace {
             }),
             new_tab: Box::new(move |window, cx| {
                 new_tab.update(cx, |this, cx| this.new_tab(window, cx)).ok();
+            }),
+            drag_over_bar: Box::new(move |x, _window, cx| {
+                drag_over_bar
+                    .update(cx, |this, cx| this.set_tab_insert_at_x(x, cx))
+                    .ok();
+            }),
+            drag_start: Box::new(move |tab_id, window, cx| {
+                let content = drag_start
+                    .update(cx, |this, cx| this.ghost_content(&tab_id, cx))
+                    .ok()
+                    .flatten();
+                if let Some(content) = content {
+                    // 커서의 **전역** 좌표 — 패널이 모니터마다 한 장씩이라
+                    // 모두가 같은 기준점을 봐야 카드가 경계를 넘어간다.
+                    let at = crate::displays::cursor(window, window.mouse_position(), cx);
+                    drag_ghost::begin(content, at, cx);
+                }
             }),
             drop_tab: Box::new(move |drag, window, cx| {
                 drop_tab
@@ -1534,12 +1673,10 @@ impl TerminalWorkspace {
         panes
     }
 
-    /// 탭바 위 드롭 지점 → 삽입 경계. 기하는 현재 탭 순서대로 정렬해서 쓴다
-    /// (geometry 맵의 순서는 페인트 순서라 신뢰하지 않는다).
-    fn tab_bar_boundary(&self, window: &mut Window) -> usize {
+    /// 마지막 렌더에서 각 탭이 차지한 영역 (현재 탭 순서대로).
+    pub fn tab_bounds(&self) -> Vec<(TabId, Bounds<Pixels>)> {
         let geometry = self.geometry.borrow();
-        let ordered: Vec<(TabId, Bounds<Pixels>)> = self
-            .tabs
+        self.tabs
             .iter()
             .filter_map(|tab| {
                 geometry
@@ -1548,8 +1685,13 @@ impl TerminalWorkspace {
                     .find(|(id, _)| *id == tab.id)
                     .map(|(id, b)| (id.clone(), *b))
             })
-            .collect();
-        drop_boundary(&ordered, window.mouse_position().x)
+            .collect()
+    }
+
+    /// 탭바 위 드롭 지점 → 삽입 경계. 기하는 현재 탭 순서대로 정렬해서 쓴다
+    /// (geometry 맵의 순서는 페인트 순서라 신뢰하지 않는다).
+    fn tab_bar_boundary(&self, window: &mut Window) -> usize {
+        self.tab_boundary_for_x(window.mouse_position().x)
     }
 }
 
@@ -1566,6 +1708,8 @@ impl Render for TerminalWorkspace {
         let tab_handlers = self.tab_bar_handlers(cx);
         let active = self.active_index();
         let dragging = self.divider.is_some();
+        // 드래그가 끝났는데 마지막 캐럿이 남아 있을 수 있다 (drag_over와 같은 이유).
+        let insert_at = self.tab_insert.filter(|_| cx.has_active_drag());
 
         let tab_bar = render_tab_bar(&TabBarCtx {
             tabs: &self.tabs,
@@ -1573,6 +1717,7 @@ impl Render for TerminalWorkspace {
             broadcast: &self.broadcast_tabs,
             renaming: self.rename.as_ref().map(|(id, input)| (id, input)),
             geometry: self.geometry.clone(),
+            insert_at,
             handlers: tab_handlers,
             theme: &theme,
         });

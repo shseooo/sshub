@@ -12,12 +12,14 @@
 
 use std::time::Duration;
 
-use gpui::{App, AppContext as _, Context, Entity, Global, Task};
+use gpui::{App, AppContext as _, Bounds, Context, Entity, Global, Pixels, Point, Task, WindowHandle};
 use sshub_core::window_state::WindowBounds;
 use sshub_splits::TerminalTab;
 
+use crate::displays;
 use crate::state::app_state;
 use crate::window_session::{self, WindowRecord};
+use crate::workspace::Workspace;
 
 /// 연속 변경을 한 번의 파일 쓰기로 접는 창(窓).
 pub const PERSIST_DEBOUNCE: Duration = Duration::from_millis(400);
@@ -27,10 +29,30 @@ pub const PERSIST_DEBOUNCE: Duration = Duration::from_millis(400);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WindowId(pub u64);
 
+/// 매니저가 창 하나에 대해 아는 전부.
+struct WindowEntry {
+    id: WindowId,
+    record: WindowRecord,
+    /// 창이 실제로 열린 뒤 셸이 채워 준다. 다른 창으로 탭을 밀어 넣을 때
+    /// 필요하다 — 이게 없으면 목적 창의 뷰에 손댈 방법이 없다.
+    handle: Option<WindowHandle<Workspace>>,
+    /// 마지막으로 활성화된 순번. 화면에서 겹친 창 중 **위에 있는 창**을
+    /// 고르는 유일한 근거다 (플랫폼 z-order는 gpui가 노출하지 않는다).
+    activated: u64,
+    /// 이 창의 **전역** 사각형 (모든 모니터를 관통하는 좌표계, `displays`).
+    ///
+    /// `record.bounds`와 따로 두는 이유: 저장·복원에 쓰는 그 값은 gpui가 창을
+    /// 열 때 기대하는 **디스플레이 상대** 좌표라, 모니터가 둘이면 서로 다른
+    /// 창의 값을 그대로 비교할 수 없다.
+    global: Option<Bounds<Pixels>>,
+}
+
 pub struct WindowManager {
     /// 등록 순서 = 저장 순서 = 다음 실행의 복원 순서.
-    records: Vec<(WindowId, WindowRecord)>,
+    records: Vec<WindowEntry>,
     next_id: u64,
+    /// `activated` 발급기. 0은 "한 번도 활성화되지 않음"으로 남긴다.
+    activation_clock: u64,
     /// 종료 중에는 창이 닫혀도 레코드를 지우지 않는다 — 종료 시 gpui가 창을
     /// 전부 드랍하므로, 그때 unregister를 허용하면 방금 저장한 창 목록이
     /// 빈 배열로 덮여 다음 실행에서 탭이 전부 사라진다.
@@ -68,6 +90,7 @@ impl WindowManager {
         WindowManager {
             records: Vec::new(),
             next_id: 0,
+            activation_clock: 0,
             quitting: false,
             _persist: None,
         }
@@ -86,14 +109,63 @@ impl WindowManager {
     pub fn register(&mut self, bounds: WindowBounds) -> WindowId {
         let id = WindowId(self.next_id);
         self.next_id += 1;
-        self.records.push((
+        self.records.push(WindowEntry {
             id,
-            WindowRecord {
+            record: WindowRecord {
                 bounds,
                 ..WindowRecord::empty()
             },
-        ));
+            handle: None,
+            activated: 0,
+            global: None,
+        });
         id
+    }
+
+    /// 창이 열린 직후 셸 핸들을 붙인다 (`workspace::open`).
+    pub fn set_handle(&mut self, id: WindowId, handle: WindowHandle<Workspace>) {
+        if let Some(entry) = self.entry_mut(id) {
+            entry.handle = Some(handle);
+        }
+    }
+
+    pub fn handle(&self, id: WindowId) -> Option<WindowHandle<Workspace>> {
+        self.entry(id).and_then(|entry| entry.handle)
+    }
+
+    /// 이 창이 방금 활성화됐다 — 겹친 창 중 무엇이 위인지의 근거를 갱신한다.
+    pub fn touch(&mut self, id: WindowId) {
+        self.activation_clock += 1;
+        let clock = self.activation_clock;
+        if let Some(entry) = self.entry_mut(id) {
+            entry.activated = clock;
+        }
+    }
+
+    /// 화면 좌표 위에 있는 창 — 겹쳤으면 **가장 최근에 활성화된** 창.
+    ///
+    /// 창을 넘나드는 탭 드래그에서 목적지를 정하는 유일한 판정이다. macOS는
+    /// 마우스를 누른 창이 버튼을 뗄 때까지 이벤트를 독점하므로(implicit
+    /// capture), 목적 창은 자기가 호버됐다는 사실조차 모른다. 그래서 드래그를
+    /// 시작한 창이 저장된 창 사각형으로 직접 맞혀야 한다.
+    ///
+    /// 아직 화면에 자리 잡지 않은 창(`global`이 없음)은 후보에서 뺀다.
+    ///
+    /// `at`은 **전역 좌표**여야 한다([`crate::displays`]) — 모니터가 둘 이상이면
+    /// gpui의 창 좌표가 모니터마다 다른 공간에 있어서, 그대로 비교하면 다른
+    /// 모니터의 창이 잡히지 않거나 엉뚱하게 잡힌다.
+    pub fn window_at(&self, at: Point<Pixels>, except: Option<WindowId>) -> Option<WindowId> {
+        self.records
+            .iter()
+            .filter(|entry| Some(entry.id) != except)
+            .filter(|entry| {
+                entry
+                    .global
+                    .as_ref()
+                    .is_some_and(|rect| displays::contains(rect, at))
+            })
+            .max_by_key(|entry| entry.activated)
+            .map(|entry| entry.id)
     }
 
     /// 그 창의 탭 구성만 교체한다 (다른 창 레코드는 건드리지 않는다).
@@ -104,9 +176,12 @@ impl WindowManager {
         }
     }
 
-    pub fn update_bounds(&mut self, id: WindowId, bounds: WindowBounds) {
-        if let Some(record) = self.record_mut(id) {
-            record.bounds = bounds;
+    /// 저장용 지오메트리(`bounds`)와 화면 판정용 전역 사각형(`global`)을 함께
+    /// 갱신한다 — 둘은 같은 창에서 나오지만 좌표계가 다르다.
+    pub fn update_bounds(&mut self, id: WindowId, bounds: WindowBounds, global: Bounds<Pixels>) {
+        if let Some(entry) = self.entry_mut(id) {
+            entry.record.bounds = bounds;
+            entry.global = Some(global);
         }
     }
 
@@ -116,31 +191,33 @@ impl WindowManager {
         if self.quitting {
             return;
         }
-        self.records.retain(|(existing, _)| *existing != id);
+        self.records.retain(|entry| entry.id != id);
+    }
+
+    fn entry(&self, id: WindowId) -> Option<&WindowEntry> {
+        self.records.iter().find(|entry| entry.id == id)
+    }
+
+    fn entry_mut(&mut self, id: WindowId) -> Option<&mut WindowEntry> {
+        self.records.iter_mut().find(|entry| entry.id == id)
     }
 
     fn record_mut(&mut self, id: WindowId) -> Option<&mut WindowRecord> {
-        self.records
-            .iter_mut()
-            .find(|(existing, _)| *existing == id)
-            .map(|(_, record)| record)
+        self.entry_mut(id).map(|entry| &mut entry.record)
     }
 
     pub fn record(&self, id: WindowId) -> Option<&WindowRecord> {
-        self.records
-            .iter()
-            .find(|(existing, _)| *existing == id)
-            .map(|(_, record)| record)
+        self.entry(id).map(|entry| &entry.record)
     }
 
     pub fn ids(&self) -> Vec<WindowId> {
-        self.records.iter().map(|(id, _)| *id).collect()
+        self.records.iter().map(|entry| entry.id).collect()
     }
 
     pub fn records(&self) -> Vec<WindowRecord> {
         self.records
             .iter()
-            .map(|(_, record)| record.clone())
+            .map(|entry| entry.record.clone())
             .collect()
     }
 
@@ -230,9 +307,8 @@ mod tests {
         manager.update_layout(id, vec![tab("t1", "s1")], 0);
         manager.update_bounds(
             id,
-            WindowBounds {
-                width: 1, height: 1, x: None, y: None,
-            },
+            WindowBounds { width: 1, height: 1, x: None, y: None },
+            Bounds::default(),
         );
         assert!(manager.is_empty());
         assert!(manager.records().is_empty());
@@ -291,12 +367,8 @@ mod tests {
         let second = manager.register(B);
         manager.update_bounds(
             second,
-            WindowBounds {
-                width: 1280,
-                height: 800,
-                x: Some(40),
-                y: Some(50),
-            },
+            WindowBounds { width: 1280, height: 800, x: Some(40), y: Some(50) },
+            Bounds::default(),
         );
         assert_eq!(manager.record(first).unwrap().bounds, B);
         let moved = manager.record(second).unwrap().bounds.clone();
@@ -329,6 +401,91 @@ mod tests {
         assert_eq!(restored[0].session_ids(), vec!["s1"]);
         assert_eq!(restored[1].session_ids(), vec!["s2", "s3"]);
         assert_eq!(restored[1].active_index(), 1);
+    }
+
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
+        Bounds {
+            origin: gpui::point(gpui::px(x), gpui::px(y)),
+            size: gpui::size(gpui::px(w), gpui::px(h)),
+        }
+    }
+
+    fn at(x: f32, y: f32) -> Point<Pixels> {
+        gpui::point(gpui::px(x), gpui::px(y))
+    }
+
+    /// 창을 등록하고 전역 사각형까지 채운다 (실제 경로는 `sync_bounds`).
+    fn placed(manager: &mut WindowManager, x: f32, y: f32, w: f32, h: f32) -> WindowId {
+        let id = manager.register(B);
+        manager.update_bounds(id, B, rect(x, y, w, h));
+        id
+    }
+
+    #[test]
+    fn window_at_finds_the_window_under_a_screen_point() {
+        let mut manager = WindowManager::new();
+        let left = placed(&mut manager, 0.0, 0.0, 800.0, 600.0);
+        let right = placed(&mut manager, 900.0, 100.0, 800.0, 600.0);
+
+        assert_eq!(manager.window_at(at(10.0, 10.0), None), Some(left));
+        assert_eq!(manager.window_at(at(1000.0, 200.0), None), Some(right));
+        assert_eq!(manager.window_at(at(850.0, 200.0), None), None, "창 사이 빈 화면");
+        // 경계: 좌상단은 포함, 우하단은 배타 (인접한 두 창이 겹쳐 잡히지 않게).
+        assert_eq!(manager.window_at(at(0.0, 0.0), None), Some(left));
+        assert_eq!(manager.window_at(at(800.0, 600.0), None), None);
+    }
+
+    #[test]
+    fn a_window_on_another_monitor_is_a_valid_drop_target() {
+        // 회귀 방지(실제 신고): 좌표를 디스플레이 상대로 비교하면 다른 모니터의
+        // 창이 후보에서 통째로 빠진다. 전역 좌표로 올리면 두 번째 모니터
+        // (전역 x = 2560~)에 있는 창도 그냥 잡힌다.
+        let mut manager = WindowManager::new();
+        let on_primary = placed(&mut manager, 100.0, 100.0, 1000.0, 700.0);
+        let on_second = placed(&mut manager, 2700.0, 200.0, 1000.0, 700.0);
+
+        assert_eq!(manager.window_at(at(200.0, 200.0), None), Some(on_primary));
+        assert_eq!(manager.window_at(at(3000.0, 400.0), None), Some(on_second));
+        // 주 모니터 왼쪽에 붙은 모니터는 전역 x가 음수다.
+        let on_left = placed(&mut manager, -1800.0, 50.0, 900.0, 600.0);
+        assert_eq!(manager.window_at(at(-1500.0, 100.0), None), Some(on_left));
+    }
+
+    #[test]
+    fn overlapping_windows_resolve_to_the_most_recently_activated() {
+        // 창이 겹치면 "위에 있는 창"에 떨어져야 한다. 플랫폼 z-order를 gpui가
+        // 주지 않으므로 활성 순번으로 근사한다.
+        let mut manager = WindowManager::new();
+        let below = placed(&mut manager, 0.0, 0.0, 800.0, 600.0);
+        let above = placed(&mut manager, 100.0, 100.0, 800.0, 600.0);
+
+        manager.touch(below);
+        assert_eq!(manager.window_at(at(200.0, 200.0), None), Some(below));
+        manager.touch(above);
+        assert_eq!(manager.window_at(at(200.0, 200.0), None), Some(above));
+        // 겹치지 않는 자리는 활성 순번과 무관하다.
+        assert_eq!(manager.window_at(at(50.0, 50.0), None), Some(below));
+    }
+
+    #[test]
+    fn window_at_can_exclude_a_window_and_ignores_unplaced_ones() {
+        let mut manager = WindowManager::new();
+        let target = placed(&mut manager, 0.0, 0.0, 800.0, 600.0);
+        // 아직 화면에 자리 잡지 않은 창을 원점에 있다고 보면 좌상단 드롭이
+        // 빨려 들어간다.
+        let unplaced = manager.register(B);
+
+        assert_eq!(manager.window_at(at(10.0, 10.0), Some(target)), None);
+        assert_ne!(manager.window_at(at(10.0, 10.0), None), Some(unplaced));
+    }
+
+    #[test]
+    fn a_closed_window_is_no_longer_a_drop_target() {
+        let mut manager = WindowManager::new();
+        let id = placed(&mut manager, 0.0, 0.0, 800.0, 600.0);
+        manager.touch(id);
+        manager.unregister(id);
+        assert_eq!(manager.window_at(at(10.0, 10.0), None), None);
     }
 
     #[test]

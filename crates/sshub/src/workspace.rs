@@ -9,17 +9,21 @@
 //! 새로 만든다(상태를 들고 있을 이유가 없다).
 
 use gpui::{
-    actions, div, point, prelude::*, px, size, AnyView, App, Bounds, Context, Entity, FocusHandle,
-    Focusable, MouseButton, MouseDownEvent, Subscription, TitlebarOptions, Window,
+    actions, canvas, div, point, prelude::*, px, size, AnyView, App, Bounds, Context, DispatchPhase,
+    DisplayId, Entity, FocusHandle, Focusable, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, Subscription, TitlebarOptions, Window,
     WindowBackgroundAppearance, WindowHandle, WindowOptions,
 };
 use sshub_core::window_state::WindowBounds as SavedBounds;
-use sshub_splits::SessionId;
+use sshub_splits::{SessionId, TabId};
 
 use crate::i18n::{tr, TrKey};
 use crate::keymap::NewWindow;
 use crate::session::pane_label;
+use crate::displays;
+use crate::drag_ghost;
 use crate::session_registry;
+use crate::split_view::ActiveTabDrag;
 use crate::state::app_state;
 use crate::terminal_workspace::{TerminalWorkspace, WorkspaceEvent};
 use crate::theme::theme;
@@ -39,6 +43,9 @@ actions!(sshub_workspace, [MoveTabToNewWindow]);
 const TITLEBAR_HEIGHT: f32 = 36.;
 /// 새 창을 기존 창 위에 정확히 겹쳐 놓지 않기 위한 캐스케이드 오프셋.
 const CASCADE_OFFSET: i32 = 28;
+/// 탭을 창 밖으로 끌어내 만든 새 창의 위치 보정 — 놓은 지점에 **탭이** 오도록
+/// 창 좌상단을 왼쪽·위로 민다 (타이틀바 36px + 탭바 절반).
+const DETACH_GRAB: (i32, i32) = (40, 50);
 
 /// 열려 있는 모달. `prev_focus`는 닫을 때 포커스를 되돌리기 위한 것 —
 /// 모달이 닫혔는데 포커스가 허공에 남으면 키 입력이 전부 죽는다.
@@ -69,6 +76,10 @@ pub struct Workspace {
     /// `&mut Window`가 필요해 렌더까지 미룬다(pending_connect와 같은 이유).
     pending_terminal_focus: bool,
     modal: Option<ActiveModal>,
+    /// 지금 삽입 캐럿을 띄워 둔 **다른** 창. 드래그가 그 창을 벗어나면 지워
+    /// 줘야 한다 — 목적 창은 드래그 중 마우스 이벤트를 받지 못하므로 스스로
+    /// 지울 수 없다.
+    hint_window: Option<WindowId>,
     toasts: Vec<Toast>,
     next_toast_id: u64,
     focus_handle: FocusHandle,
@@ -84,12 +95,29 @@ pub fn open(
     bounds: SavedBounds,
     cx: &mut App,
 ) -> anyhow::Result<WindowHandle<Workspace>> {
+    open_on(seed, bounds, None, cx)
+}
+
+/// 특정 모니터에 연다. `bounds`는 **그 디스플레이 기준** 좌표여야 한다 —
+/// gpui가 창을 만들 때 그렇게 환산한다([`display_placement`]가 맞춰 준다).
+pub fn open_on(
+    seed: Option<serde_json::Value>,
+    bounds: SavedBounds,
+    display: Option<DisplayId>,
+    cx: &mut App,
+) -> anyhow::Result<WindowHandle<Workspace>> {
     let window_id =
         window_manager::manager(cx).update(cx, |manager, _| manager.register(bounds.clone()));
-    let options = window_options(&bounds, cx);
+    let options = window_options(&bounds, display, cx);
     let handle = cx.open_window(options, |window, cx| {
         cx.new(|cx| Workspace::new(window_id, seed, window, cx))
     })?;
+    // 창을 넘나드는 탭 이동은 목적 창의 셸을 직접 열어야 한다 — 핸들이 없으면
+    // 손댈 방법이 없다. 방금 연 창이 곧 최상단이므로 활성 순번도 올려 둔다.
+    window_manager::manager(cx).update(cx, |manager, _| {
+        manager.set_handle(window_id, handle);
+        manager.touch(window_id);
+    });
     handle
         .update(cx, |workspace, window, cx| {
             let handle = workspace.terminal.read(cx).focus_handle(cx);
@@ -119,7 +147,7 @@ pub fn background_appearance(translucency: u8) -> WindowBackgroundAppearance {
     }
 }
 
-fn window_options(bounds: &SavedBounds, cx: &App) -> WindowOptions {
+fn window_options(bounds: &SavedBounds, display: Option<DisplayId>, cx: &App) -> WindowOptions {
     let dims = size(px(bounds.width as f32), px(bounds.height as f32));
     // x/y는 둘 다 있을 때만 신뢰한다(sanitize_bounds가 보장) — 없으면 화면 중앙.
     let placed = match (bounds.x, bounds.y) {
@@ -129,6 +157,7 @@ fn window_options(bounds: &SavedBounds, cx: &App) -> WindowOptions {
     let translucency = app_state(cx).read(cx).settings.appearance.translucency;
     WindowOptions {
         window_bounds: Some(gpui::WindowBounds::Windowed(placed)),
+        display_id: display,
         titlebar: Some(TitlebarOptions {
             title: Some("sshub".into()),
             appears_transparent: true,
@@ -171,7 +200,15 @@ impl Workspace {
             // 사용자는 `~/.ssh/config`를 에디터에서 고친 뒤 앱으로 돌아온다.
             // gpui 0.2.2 `Context::observe_window_activation`(app/context.rs:447)이
             // 활성/비활성 전환마다 불러 주므로 그 순간 디스크를 다시 본다.
-            cx.observe_window_activation(window, |this, _window, cx| {
+            cx.observe_window_activation(window, |this, window, cx| {
+                // 활성 순번 = 겹친 창의 z-order 근사. 창 밖 드롭이 어느 창 위인지
+                // 판정하는 근거다(`WindowManager::window_at`).
+                if window.is_window_active() {
+                    if let Some(manager) = window_manager::try_manager(cx) {
+                        let id = this.window_id;
+                        manager.update(cx, |manager, _| manager.touch(id));
+                    }
+                }
                 this.refresh_from_disk(cx);
             }),
             // 창이 닫히면(=이 뷰가 드랍되면) 레코드를 지우고 고아 세션을 정리한다.
@@ -203,6 +240,7 @@ impl Workspace {
             // 시작 화면이 터미널이면 첫 렌더에서 바로 포커스를 잡는다.
             pending_terminal_focus: matches!(page, Page::Terminal),
             modal: None,
+            hint_window: None,
             toasts: Vec::new(),
             next_toast_id: 0,
             focus_handle: cx.focus_handle(),
@@ -249,10 +287,13 @@ impl Workspace {
 
     fn sync_bounds(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let bounds = saved_bounds(window);
+        // 저장용(디스플레이 상대)과 화면 판정용(전역)을 함께 넘긴다 — 모니터가
+        // 둘이면 이 둘이 다른 공간에 있다(`displays` 모듈 주석).
+        let global = displays::window_rect(window, cx);
         let window_id = self.window_id;
         if let Some(manager) = window_manager::try_manager(cx) {
             manager.update(cx, |manager, cx| {
-                manager.update_bounds(window_id, bounds);
+                manager.update_bounds(window_id, bounds, global);
                 manager.persist(cx);
             });
         }
@@ -411,6 +452,265 @@ impl Workspace {
         });
     }
 
+    // ---- 창을 넘나드는 탭 드래그 ------------------------------------------
+
+    /// 탭 드래그가 끝났다. 이 창 안이면 `false`(평소의 `on_drop`에 맡긴다),
+    /// 다른 창/창 밖으로 처리했으면 `true`.
+    ///
+    /// **왜 드래그를 시작한 창이 전부 처리하는가.** macOS는 마우스를 누른 창이
+    /// 버튼을 뗄 때까지 이벤트를 독점한다(implicit capture). 목적 창은 커서가
+    /// 자기 위에 있다는 사실조차 모르고, 창 밖에는 애초에 드롭 대상이 없다.
+    /// 그래서 gpui의 `on_drop`은 이 두 경우에 절대 불리지 않고, 소스 창이
+    /// mouse-up의 **화면 좌표**로 목적지를 직접 맞혀야 한다.
+    fn finish_tab_drag(
+        &mut self,
+        tab_id: TabId,
+        screen: Point<Pixels>,
+        local: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(manager) = window_manager::try_manager(cx) else {
+            return false;
+        };
+        let target = manager.read(cx).window_at(screen, Some(self.window_id));
+        // 자기 창 판정은 **창 좌표**로 한다. 전역 사각형끼리 비교하면 좌표 환산이
+        // 한 군데만 어긋나도 창 안 드롭이 "창 밖"이 되어, 탭 순서를 바꾸려던
+        // 드래그가 창을 새로 만들어 버린다. 로컬 `0..size`는 언제나 정확하다.
+        match tab_drop_target(displays::is_inside(window, local), target) {
+            TabDropTarget::SameWindow => false,
+            TabDropTarget::OtherWindow(id) => {
+                self.move_tab_to_window(tab_id, id, screen, window, cx)
+            }
+            TabDropTarget::NewWindow => self.detach_tab_to_new_window(tab_id, screen, window, cx),
+        }
+    }
+
+    /// 전역 좌표 → 이 창의 탭 삽입 경계. 창 밖이면 `None`(= 맨 뒤).
+    ///
+    /// 미리보기 캐럿과 실제 삽입이 **같은 함수**를 쓴다 — 눈에 보인 자리와
+    /// 실제로 꽂히는 자리가 다르면 표시가 없느니만 못하다.
+    fn tab_boundary_for(&self, screen: Point<Pixels>, window: &Window, cx: &App) -> Option<usize> {
+        let rect = displays::window_rect(window, cx);
+        displays::contains(&rect, screen).then(|| {
+            self.terminal
+                .read(cx)
+                .tab_boundary_for_x(screen.x - rect.origin.x)
+        })
+    }
+
+    /// 드래그가 지나가는 동안 목적 창에 삽입 캐럿을 띄운다.
+    ///
+    /// 소스 창이 대신 밀어 넣는 이유는 늘 같다 — macOS는 마우스를 누른 창이
+    /// 이벤트를 독점하므로 목적 창은 커서가 자기 위에 있다는 것조차 모른다.
+    fn update_drop_hint(&mut self, screen: Point<Pixels>, cx: &mut Context<Self>) {
+        let target = window_manager::try_manager(cx)
+            .and_then(|manager| manager.read(cx).window_at(screen, Some(self.window_id)));
+        if self.hint_window != target {
+            // 창이 바뀌었으면 이전 창의 캐럿부터 지운다.
+            self.clear_remote_hint(cx);
+            self.hint_window = target;
+        }
+        let Some(id) = target else {
+            return;
+        };
+        let Some(handle) = window_manager::try_manager(cx)
+            .and_then(|manager| manager.read(cx).handle(id))
+        else {
+            return;
+        };
+        handle
+            .update(cx, |this, window, cx| {
+                let at = this.tab_boundary_for(screen, window, cx);
+                this.terminal
+                    .update(cx, |terminal, cx| terminal.set_tab_insert(at, cx));
+            })
+            .ok();
+    }
+
+    /// 다른 창에 띄워 둔 캐럿을 지운다 (드래그가 끝났거나 그 창을 벗어났다).
+    fn clear_remote_hint(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.hint_window.take() else {
+            return;
+        };
+        let Some(handle) = window_manager::try_manager(cx)
+            .and_then(|manager| manager.read(cx).handle(id))
+        else {
+            return;
+        };
+        handle
+            .update(cx, |this, _window, cx| {
+                this.terminal
+                    .update(cx, |terminal, cx| terminal.set_tab_insert(None, cx));
+            })
+            .ok();
+    }
+
+    /// 살아 있는 다른 창으로 탭을 밀어 넣는다.
+    fn move_tab_to_window(
+        &mut self,
+        tab_id: TabId,
+        target: WindowId,
+        screen: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(manager) = window_manager::try_manager(cx) else {
+            return false;
+        };
+        let (Some(target_handle), source_handle) = (
+            manager.read(cx).handle(target),
+            manager.read(cx).handle(self.window_id),
+        ) else {
+            return false;
+        };
+        // 받아 줄 곳을 확보한 **뒤에** 뗀다 — 중간에 실패하면 탭이 증발한다.
+        let Some(tab) = self
+            .terminal
+            .update(cx, |terminal, cx| terminal.take_tab(&tab_id, window, cx))
+        else {
+            return false;
+        };
+        let emptied = self.terminal.read(cx).tabs().is_empty();
+
+        cx.defer(move |cx| {
+            let received = target_handle
+                .update(cx, |this, window, cx| {
+                    // 미리보기 캐럿이 서 있던 바로 그 자리에 꽂는다.
+                    let at = this.tab_boundary_for(screen, window, cx);
+                    this.terminal
+                        .update(cx, |terminal, cx| terminal.receive_tab(tab, at, window, cx));
+                    // 매니저 레코드를 **지금** 맞춘다. 아래에서 빈 소스 창을 닫으면
+                    // 그 release 훅이 "어느 창에도 없는 세션"을 죽이는데, 그 계산이
+                    // 이 창의 레코드를 보기 때문이다(디바운스를 기다리면 늦다).
+                    this.sync_layout(cx);
+                    this.set_page(Page::Terminal, window, cx);
+                    window.activate_window();
+                })
+                .is_ok();
+            // 마지막 탭을 넘겼으면 빈 창을 남기지 않는다. 실패했다면 탭이 소스
+            // 창으로 돌아갈 길이 없으므로(이미 뗐다) 창은 그대로 둔다.
+            if received && emptied {
+                if let Some(source) = source_handle {
+                    source.update(cx, |_, window, _| window.remove_window()).ok();
+                }
+            }
+        });
+        true
+    }
+
+    /// 창 밖에 놓았다 — 그 자리에 새 창을 만들어 탭을 옮긴다.
+    fn detach_tab_to_new_window(
+        &mut self,
+        tab_id: TabId,
+        screen: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        // 탭이 하나뿐인 창에서 그 탭을 빼내면 빈 창 하나와 탭 하나짜리 창이
+        // 생길 뿐이다. 이미 "그 탭의 창"이므로 아무 일도 하지 않는다.
+        if self.terminal.read(cx).tabs().len() <= 1 {
+            return false;
+        }
+        let Some(tab) = self
+            .terminal
+            .update(cx, |terminal, cx| terminal.take_tab(&tab_id, window, cx))
+        else {
+            return false;
+        };
+        let source = saved_bounds(window);
+        // 창 좌상단이 아니라 **탭이** 커서 아래 오도록 민다.
+        let top_left = point(
+            screen.x - px(DETACH_GRAB.0 as f32),
+            screen.y - px(DETACH_GRAB.1 as f32),
+        );
+        // 놓은 모니터에 연다. gpui는 창 좌표를 그 디스플레이 기준으로 환산하므로
+        // 전역 좌표에서 그 디스플레이의 원점을 빼서 넘겨야 한다 — 안 그러면
+        // 두 번째 모니터에 놓아도 창이 주 모니터에 열린다.
+        let (display, local) = display_placement(top_left, cx);
+        let bounds = SavedBounds {
+            width: source.width,
+            height: source.height,
+            x: Some(f32::from(local.x).round() as i32),
+            y: Some(f32::from(local.y).round() as i32),
+        };
+        let seed = serde_json::json!({ "tabs": [tab], "activeIndex": 0 });
+        cx.defer(move |cx| {
+            if let Err(error) = open_on(Some(seed), bounds, display, cx) {
+                eprintln!("sshub: 탭을 새 창으로 옮기지 못했습니다: {error}");
+            }
+        });
+        true
+    }
+
+    /// mouse-up을 창 전체에서 가로채는 리스너. 드롭 대상이 없는 곳(창 밖·다른
+    /// 창)에 놓아도 반드시 불리도록 요소 히트박스에 매이지 않는 경로를 쓴다.
+    ///
+    /// **캡처 페이즈**여야 한다 — `on_drop`은 버블에서 돌고, 여기서
+    /// `stop_propagation`을 해야 창 밖 드롭이 이 창 안의 드롭으로도 처리되는
+    /// 이중 적용을 막을 수 있다.
+    fn tab_drag_watcher(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let this = cx.entity().downgrade();
+        canvas(
+            |_, _, _| {},
+            move |_, _, window, _cx| {
+                // 커서 추적 — 캡처 페이즈라 어떤 요소 위에 있든 반드시 불린다.
+                let this_move = this.clone();
+                window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                    if phase != DispatchPhase::Capture || !drag_ghost::is_active(cx) {
+                        return;
+                    }
+                    let screen = displays::cursor(window, event.position, cx);
+                    drag_ghost::track(screen, cx);
+                    // 다른 창 위를 지날 때 그 창의 탭바에 캐럿을 세운다.
+                    this_move
+                        .update(cx, |this, cx| this.update_drop_hint(screen, cx))
+                        .ok();
+                });
+
+                let this = this.clone();
+                window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+                    if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
+                        return;
+                    }
+                    // 고스트 패널은 화면 전체를 덮으므로 **무조건** 먼저 치운다.
+                    // 남아 있으면 그 뒤로 화면 클릭이 통째로 먹힌다.
+                    drag_ghost::end(cx);
+                    // 다른 창에 세워 둔 캐럿도 반드시 거둔다 — 그 창은 드래그가
+                    // 끝났다는 사실을 스스로 알 수 없다.
+                    this.update(cx, |this, cx| this.clear_remote_hint(cx)).ok();
+                    // 어떤 mouse-up이든 흔적은 지운다 — 남겨 두면 다음 드롭이
+                    // 이미 끝난 드래그의 탭 id로 엉뚱하게 동작한다.
+                    let Some(tab_id) = cx.try_global::<ActiveTabDrag>().map(|g| g.0.clone())
+                    else {
+                        return;
+                    };
+                    cx.remove_global::<ActiveTabDrag>();
+                    if !cx.has_active_drag() {
+                        return;
+                    }
+                    // 커서의 전역 좌표 — 어느 창 위인지는 화면 위에서만 답이 나온다.
+                    // 미리보기와 **같은 좌표**를 쓴다: 눈에 보이는 자리가 곧 놓이는
+                    // 자리여야 한다.
+                    let screen = displays::cursor(window, event.position, cx);
+                    let local = event.position;
+                    let handled = this
+                        .update(cx, |this, cx| {
+                            this.finish_tab_drag(tab_id, screen, local, window, cx)
+                        })
+                        .unwrap_or(false);
+                    if handled {
+                        cx.stop_propagation();
+                    }
+                });
+            },
+        )
+        // 레이아웃에 자리를 차지하면 안 된다 — 리스너를 달기 위한 껍데기다.
+        .absolute()
+        .w_0()
+        .h_0()
+    }
+
     /// 활성 탭을 떼어 새 창으로 옮긴다.
     ///
     /// PTY가 살아남는 이유: `Entity<Terminal>`은 앱 스코프
@@ -434,6 +734,38 @@ impl Workspace {
         cx.defer(move |cx| {
             let _ = open(Some(seed), bounds, cx);
         });
+    }
+}
+
+/// 전역 좌표 → (그 점이 있는 디스플레이, 그 디스플레이 기준 좌표).
+///
+/// 어느 디스플레이에도 안 걸리면(모니터를 방금 뽑았다든지) 주 디스플레이로
+/// 떨어뜨린다 — 창이 보이지 않는 곳에 열리는 것보다 낫다.
+fn display_placement(at: Point<Pixels>, cx: &App) -> (Option<DisplayId>, Point<Pixels>) {
+    let all = cx.displays();
+    let rects = displays::display_rects(cx);
+    match displays::index_at(&rects, at) {
+        Some(index) => (Some(all[index].id()), at - rects[index].origin),
+        None => (None, at),
+    }
+}
+
+/// 탭 드롭이 어디로 가야 하는가.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabDropTarget {
+    /// 끌던 창 안 — gpui의 평소 `on_drop`(탭 순서 변경·pane 병합)에 맡긴다.
+    SameWindow,
+    OtherWindow(WindowId),
+    NewWindow,
+}
+
+/// `inside_self`가 먼저다. 드래그 중인 창은 마우스를 누른 순간 맨 앞으로
+/// 올라오므로, 그 사각형 안에 놓았다면 눈에 보이던 것도 그 창이다.
+pub fn tab_drop_target(inside_self: bool, other: Option<WindowId>) -> TabDropTarget {
+    match (inside_self, other) {
+        (true, _) => TabDropTarget::SameWindow,
+        (false, Some(id)) => TabDropTarget::OtherWindow(id),
+        (false, None) => TabDropTarget::NewWindow,
     }
 }
 
@@ -560,6 +892,7 @@ impl Render for Workspace {
             .text_color(t.text)
             .on_action(cx.listener(Self::on_new_window))
             .on_action(cx.listener(Self::on_move_tab_to_new_window))
+            .child(self.tab_drag_watcher(cx))
             .child(titlebar)
             .child(
                 div()
@@ -590,6 +923,28 @@ impl Render for Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 회귀 방지: 창 안 드롭이 "창 밖"으로 읽히면, 탭 **순서를 바꾸려던**
+    /// 드래그가 매번 창을 새로 만들어 버린다.
+    #[test]
+    fn a_drop_inside_the_dragging_window_stays_in_that_window() {
+        let other = Some(WindowId(7));
+        assert_eq!(tab_drop_target(true, None), TabDropTarget::SameWindow);
+        assert_eq!(
+            tab_drop_target(true, other),
+            TabDropTarget::SameWindow,
+            "겹친 창이 있어도 끌던 창이 맨 앞이므로 그 안이면 그 창이다",
+        );
+    }
+
+    #[test]
+    fn a_drop_outside_goes_to_the_window_under_it_or_makes_a_new_one() {
+        assert_eq!(
+            tab_drop_target(false, Some(WindowId(3))),
+            TabDropTarget::OtherWindow(WindowId(3)),
+        );
+        assert_eq!(tab_drop_target(false, None), TabDropTarget::NewWindow);
+    }
 
     /// 창 생성(`window_options`)과 런타임 적용(`Render`)이 같은 규칙을 봐야
     /// "재시작해야 켜지는 반투명" 같은 어긋남이 다시 생기지 않는다.

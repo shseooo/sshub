@@ -644,6 +644,11 @@
     "ko": "왼쪽 탭 닫기",
     "ja": "左側のタブを閉じる"
   },
+  "term.moveToNewWindow": {
+    "en": "Move to new window",
+    "ko": "새 창으로 이동",
+    "ja": "新しいウィンドウへ移動"
+  },
   "term.copy": {
     "en": "Copy",
     "ko": "복사",

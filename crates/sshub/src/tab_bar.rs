@@ -18,12 +18,14 @@ use gpui::{
 };
 use sshub_splits::{tab_title, TabId, TerminalTab};
 
-use crate::split_view::{element_id, DragGhost, GeometryRef, PaneDrag, TabDrag};
+use crate::split_view::{element_id, ActiveTabDrag, DragGhost, GeometryRef, PaneDrag, TabDrag};
 use crate::theme::Theme;
 use crate::ui::tooltip::TextTooltip;
 use crate::ui::TextInput;
 
 pub const TAB_BAR_HEIGHT: f32 = 30.0;
+/// 삽입 위치 캐럿의 두께.
+const CARET_WIDTH: f32 = 2.0;
 
 pub type TabCallback = Box<dyn Fn(TabId, &mut Window, &mut App)>;
 pub type BarCallback = Box<dyn Fn(&mut Window, &mut App)>;
@@ -31,6 +33,8 @@ pub type TabDropCallback = Box<dyn Fn(TabDrag, &mut Window, &mut App)>;
 pub type PaneDropCallback = Box<dyn Fn(PaneDrag, &mut Window, &mut App)>;
 /// 우클릭 — 포인터의 **창 좌표**를 그대로 넘긴다(컨텍스트 메뉴가 거기 뜬다).
 pub type TabMenuCallback = Box<dyn Fn(TabId, Point<Pixels>, &mut Window, &mut App)>;
+/// 드래그가 탭바 위를 지나간다 — 창 좌표 x, 탭바 밖이면 `None`.
+pub type BarDragCallback = Box<dyn Fn(Option<Pixels>, &mut Window, &mut App)>;
 
 pub struct TabBarHandlers {
     pub select: TabCallback,
@@ -40,6 +44,10 @@ pub struct TabBarHandlers {
     /// 우클릭 — 탭 컨텍스트 메뉴. **활성 탭을 바꾸지 않는다**.
     pub context_menu: TabMenuCallback,
     pub new_tab: BarCallback,
+    /// 드래그 시작 — 커서를 따라다닐 미리보기를 띄운다(`crate::drag_ghost`).
+    pub drag_start: TabCallback,
+    /// 드래그가 탭바 위를 지날 때 — 삽입 표시(캐럿)의 위치를 정한다.
+    pub drag_over_bar: BarDragCallback,
     /// 드롭 지점은 워크스페이스가 현재 마우스 위치에서 삽입 경계로 환산한다.
     pub drop_tab: TabDropCallback,
     pub drop_pane: PaneDropCallback,
@@ -52,6 +60,8 @@ pub struct TabBarCtx<'a> {
     /// 이름을 편집 중인 탭과 그 입력 위젯.
     pub renaming: Option<(&'a TabId, &'a Entity<TextInput>)>,
     pub geometry: GeometryRef,
+    /// 지금 놓으면 탭이 들어갈 자리 (0..=len). 그 경계에 캐럿을 그린다.
+    pub insert_at: Option<usize>,
     pub handlers: Rc<TabBarHandlers>,
     pub theme: &'a Theme,
 }
@@ -82,8 +92,15 @@ pub fn render_tab_bar(ctx: &TabBarCtx<'_>) -> AnyElement {
         .border_color(theme.border)
         .overflow_hidden();
 
-    for tab in ctx.tabs {
+    for (index, tab) in ctx.tabs.iter().enumerate() {
+        if ctx.insert_at == Some(index) {
+            strip = strip.child(insert_caret(theme));
+        }
         strip = strip.child(render_tab(tab, ctx));
+    }
+    // 맨 뒤에 놓는 경우 — 마지막 탭 **뒤**에 선다.
+    if ctx.insert_at == Some(ctx.tabs.len()) {
+        strip = strip.child(insert_caret(theme));
     }
 
     let new_tab = ctx.handlers.clone();
@@ -106,14 +123,41 @@ pub fn render_tab_bar(ctx: &TabBarCtx<'_>) -> AnyElement {
     // 탭 사이 빈 공간도 드롭 대상 — 끝으로 옮기거나 분리할 때 쓴다.
     let drop_tab = ctx.handlers.clone();
     let drop_pane = ctx.handlers.clone();
+    let over_tab = ctx.handlers.clone();
+    let over_pane = ctx.handlers.clone();
     strip
         .child(div().flex_grow().h_full())
+        // `on_drag_move`는 히트박스와 무관하게 **모든** 이동에서 불린다.
+        // 그래서 탭바 위인지는 여기서 직접 판정한다 — 벗어나면 `None`을 보내
+        // 캐럿을 지운다(pane 위로 갔을 때 미리보기가 둘이 되지 않게).
+        .on_drag_move::<TabDrag>(move |event, window, cx| {
+            let at = event.bounds.contains(&event.event.position);
+            (over_tab.drag_over_bar)(at.then_some(event.event.position.x), window, cx);
+        })
+        .on_drag_move::<PaneDrag>(move |event, window, cx| {
+            let at = event.bounds.contains(&event.event.position);
+            (over_pane.drag_over_bar)(at.then_some(event.event.position.x), window, cx);
+        })
         .on_drop::<TabDrag>(move |drag, window, cx| {
             (drop_tab.drop_tab)(drag.clone(), window, cx);
         })
         .on_drop::<PaneDrag>(move |drag, window, cx| {
             (drop_pane.drop_pane)(drag.clone(), window, cx);
         })
+        .into_any_element()
+}
+
+/// 삽입 위치 캐럿.
+///
+/// 폭을 좌우 음수 마진으로 상쇄해 **레이아웃을 밀지 않는다** — 캐럿이 움직일
+/// 때마다 탭이 2px씩 흔들리면 어디에 놓이는지가 오히려 읽기 어려워진다.
+fn insert_caret(theme: &Theme) -> AnyElement {
+    div()
+        .w(px(CARET_WIDTH))
+        .mx(px(-CARET_WIDTH / 2.0))
+        .h_full()
+        .flex_shrink_0()
+        .bg(theme.accent)
         .into_any_element()
 }
 
@@ -163,6 +207,7 @@ fn render_tab(tab: &TerminalTab, ctx: &TabBarCtx<'_>) -> AnyElement {
     let menu_id = tab.id.clone();
     let drop_tab = ctx.handlers.clone();
     let drop_pane = ctx.handlers.clone();
+    let drag_start = ctx.handlers.clone();
     let ghost = title.clone();
 
     let tooltip_title = title.clone();
@@ -210,7 +255,11 @@ fn render_tab(tab: &TerminalTab, ctx: &TabBarCtx<'_>) -> AnyElement {
             TabDrag {
                 tab_id: tab.id.clone(),
             },
-            move |_payload, _offset, _window, cx| {
+            move |payload: &TabDrag, _offset, window, cx| {
+                // 창 밖/다른 창으로의 드롭은 `on_drop`을 타지 않는다. 창 셸이
+                // mouse-up에서 페이로드를 다시 볼 수 있게 여기서 남겨 둔다.
+                cx.set_global(ActiveTabDrag(payload.tab_id.clone()));
+                (drag_start.drag_start)(payload.tab_id.clone(), window, cx);
                 let label = ghost.clone();
                 cx.new(|_| DragGhost { label })
             },

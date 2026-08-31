@@ -5234,6 +5234,7 @@ name = "sshub"
 version = "0.4.2"
 dependencies = [
  "anyhow",
+ "core-graphics 0.24.0",
  "futures",
  "gpui",
  "parking_lot",

@@ -2,6 +2,8 @@
 //! 새 모듈은 여기 `pub mod` 로 추가한다 (여러 작업 흐름이 이 파일에 줄을 추가함 —
 //! 기존 선언을 지우지 말 것).
 
+pub mod displays;
+pub mod drag_ghost;
 pub mod fonts;
 pub mod i18n;
 pub mod keymap;

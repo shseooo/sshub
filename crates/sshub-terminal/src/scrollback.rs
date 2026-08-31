@@ -217,6 +217,55 @@ pub fn serialize<T: EventListener>(term: &Term<T>, max_lines: usize) -> String {
     out
 }
 
+/// 마지막 `max_lines` 내용 행을 **평문**으로 (드래그 미리보기용).
+///
+/// `serialize`와 같은 행 선택 규칙을 쓰되 SGR·soft wrap 이어붙이기는 하지
+/// 않는다 — 화면에 잠깐 보여 줄 그림이라 색이나 줄 이어짐이 의미가 없고,
+/// 행 하나가 곧 카드의 한 줄이어야 한다.
+pub fn plain_tail<T: EventListener>(term: &Term<T>, max_lines: usize) -> Vec<String> {
+    if max_lines == 0 {
+        return Vec::new();
+    }
+    let grid = term.grid();
+    let columns = grid.columns();
+    let bottom = grid.bottommost_line().0;
+    let top = grid.topmost_line().0;
+
+    let mut last = None;
+    for l in top..=bottom {
+        let row = &grid[Line(l)];
+        if (0..columns).any(|c| !is_blank(&row[crate::backend::Column(c)])) {
+            last = Some(l);
+        }
+    }
+    let Some(last) = last else {
+        return Vec::new();
+    };
+    let start = (last - max_lines as i32 + 1).max(top);
+
+    (start..=last)
+        .map(|l| {
+            let row = &grid[Line(l)];
+            let mut width = 0;
+            for c in 0..columns {
+                if !is_blank(&row[crate::backend::Column(c)]) {
+                    width = c + 1;
+                }
+            }
+            let mut text = String::new();
+            for c in 0..width {
+                let cell = &row[crate::backend::Column(c)];
+                // 와이드 문자의 뒤쪽 자리는 앞 셀이 이미 표현한다.
+                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    continue;
+                }
+                text.push(cell.c);
+            }
+            text
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,5 +439,28 @@ mod tests {
     fn persisted_cap_is_smaller_than_the_live_buffer() {
         assert_eq!(PERSISTED_SCROLLBACK_LINES, 1_000);
         assert_eq!(LIVE_SCROLLBACK_LINES, 20_000);
+    }
+
+    #[test]
+    fn plain_tail_keeps_the_last_lines_without_escapes() {
+        // 드래그 미리보기는 색이 아니라 "무엇이 떠 있는지"를 보여 준다.
+        let term = make_term(
+            20,
+            6,
+            b"one\r\ntwo\r\n\x1b[31mthree\x1b[0m\r\nfour   \r\n",
+        );
+        let tail = plain_tail(&term, 3);
+        assert_eq!(tail, vec!["two", "three", "four"], "행말 공백·SGR 제거");
+        assert!(
+            tail.iter().all(|l| !l.contains('\x1b')),
+            "평문이어야 카드에 그대로 그릴 수 있다"
+        );
+        assert_eq!(plain_tail(&term, 0), Vec::<String>::new());
+    }
+
+    #[test]
+    fn plain_tail_of_an_empty_screen_is_empty() {
+        let term = make_term(20, 6, b"");
+        assert!(plain_tail(&term, 5).is_empty(), "빈 화면엔 보여 줄 게 없다");
     }
 }
