@@ -6,8 +6,10 @@
 //! 터미널 엔티티는 [`crate::session_registry`](앱 스코프)가 들고 있어 탭이
 //! 창을 옮겨도 살아남는다.
 
+mod closing;
 mod drag_drop;
 mod menus;
+mod renaming;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -21,9 +23,8 @@ use gpui::{
 };
 use serde::{Deserialize, Serialize};
 use sshub_splits::{
-    insert_at_index, leaves, remove_leaf, rename_leaf, revive_ids, set_split_sizes, split_at,
-    tab_title, tabs_except,
-    tabs_from_inclusive, tabs_up_to_inclusive, DropSide, PaneNode, SessionId, SplitDirection,
+    insert_at_index, leaves, revive_ids, set_split_sizes, split_at, tab_title,
+    DropSide, PaneNode, SessionId, SplitDirection,
     SplitId, TabId, TerminalLeaf, TerminalTab,
 };
 use sshub_terminal::search::SearchQuery;
@@ -55,16 +56,6 @@ const MAX_SEARCH_MATCHES: usize = 1000;
 pub struct PaneSearch {
     pub query: String,
     pub visible: bool,
-}
-
-/// 확인이 필요한 닫기 동작.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum PendingClose {
-    Pane(SessionId),
-    Tab(TabId),
-    Others(TabId),
-    Right(TabId),
-    Left(TabId),
 }
 
 /// `Settings.terminal_layout` 영속 포맷 — TS `{tabs, activeIndex}`와 동일.
@@ -357,166 +348,6 @@ impl TerminalWorkspace {
         cx.notify();
     }
 
-    // ---- 닫기 -------------------------------------------------------------
-
-    /// 포커스된 pane 닫기 — 위험하면(여러 pane 또는 서버 세션) 확인 모달.
-    pub fn close_focused_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(session) = self.focused_pane.clone() else {
-            return;
-        };
-        let risky = self
-            .tab_of_pane(&session)
-            .and_then(|tab| self.tab_index(&tab))
-            .is_some_and(|i| is_risky_close(&self.tabs[i].root));
-        if risky {
-            self.ask(PendingClose::Pane(session), TrKey::TermConfirmCloseTab, window, cx);
-        } else {
-            self.apply_close(PendingClose::Pane(session), window, cx);
-        }
-    }
-
-    pub fn close_tab(&mut self, tab_id: TabId, window: &mut Window, cx: &mut Context<Self>) {
-        let risky = self
-            .tab_index(&tab_id)
-            .is_some_and(|i| is_risky_close(&self.tabs[i].root));
-        if risky {
-            self.ask(PendingClose::Tab(tab_id), TrKey::TermConfirmCloseTab, window, cx);
-        } else {
-            self.apply_close(PendingClose::Tab(tab_id), window, cx);
-        }
-    }
-
-    pub fn close_other_tabs(&mut self, tab_id: TabId, window: &mut Window, cx: &mut Context<Self>) {
-        if self.tabs.len() > 1 {
-            self.ask(PendingClose::Others(tab_id), TrKey::TermConfirmCloseOthers, window, cx);
-        }
-    }
-
-    pub fn close_tabs_to_the_right(&mut self, tab_id: TabId, window: &mut Window, cx: &mut Context<Self>) {
-        let has_right = self
-            .tab_index(&tab_id)
-            .is_some_and(|i| i + 1 < self.tabs.len());
-        if has_right {
-            self.ask(PendingClose::Right(tab_id), TrKey::TermConfirmCloseRight, window, cx);
-        }
-    }
-
-    /// 왼쪽 탭 전부 닫기 — 오른쪽 형제와 같은 확인 절차를 탄다.
-    pub fn close_tabs_to_the_left(&mut self, tab_id: TabId, window: &mut Window, cx: &mut Context<Self>) {
-        let has_left = self.tab_index(&tab_id).is_some_and(|i| i > 0);
-        if has_left {
-            // i18n에 "왼쪽 탭을 모두 닫을까요?" 문구가 없어 항목 라벨을 그대로
-            // 확인 문구로 쓴다 (새 사용자 문자열을 만들지 않기 위해).
-            self.ask(PendingClose::Left(tab_id), TrKey::TermCloseLeft, window, cx);
-        }
-    }
-
-    fn ask(
-        &mut self,
-        pending: PendingClose,
-        message: TrKey,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let this = cx.entity().downgrade();
-        let dialog = cx.new(|cx| {
-            ConfirmDialog::new(
-                tr(self.lang, TrKey::TermConfirmCloseTitle),
-                tr(self.lang, message),
-                tr(self.lang, TrKey::TermConfirmCloseAction),
-                tr(self.lang, TrKey::CommonCancel),
-                cx,
-            )
-            .danger(true)
-            .on_result(move |confirmed, window, cx| {
-                this.update(cx, |this, cx| {
-                    this.confirm = None;
-                    if confirmed {
-                        this.apply_close(pending, window, cx);
-                    }
-                    cx.notify();
-                })
-                .ok();
-            })
-        });
-        dialog.read(cx).focus(window);
-        self.confirm = Some(dialog);
-        cx.notify();
-    }
-
-    fn apply_close(&mut self, pending: PendingClose, window: &mut Window, cx: &mut Context<Self>) {
-        match pending {
-            PendingClose::Pane(session) => {
-                let Some(tab_id) = self.tab_of_pane(&session) else {
-                    return;
-                };
-                let Some(index) = self.tab_index(&tab_id) else {
-                    return;
-                };
-                let root = std::mem::replace(
-                    &mut self.tabs[index].root,
-                    PaneNode::Leaf(TerminalLeaf::new(SessionId::default(), None, String::new())),
-                );
-                match remove_leaf(root, &session) {
-                    Some(root) => {
-                        self.tabs[index].root = root;
-                        // 남은 pane 중 첫 번째로 포커스를 옮긴다.
-                        self.focused_pane = leaves(&self.tabs[index].root)
-                            .first()
-                            .map(|l| l.session_id.clone());
-                    }
-                    None => self.remove_tab_at(index),
-                }
-            }
-            PendingClose::Tab(tab_id) => {
-                if let Some(index) = self.tab_index(&tab_id) {
-                    self.remove_tab_at(index);
-                }
-            }
-            PendingClose::Others(tab_id) => {
-                self.tabs = tabs_except(std::mem::take(&mut self.tabs), &tab_id);
-                self.active_tab = Some(tab_id);
-            }
-            PendingClose::Right(tab_id) => {
-                self.tabs = tabs_up_to_inclusive(std::mem::take(&mut self.tabs), &tab_id);
-                if self.active_index().is_none() {
-                    self.active_tab = self.tabs.last().map(|t| t.id.clone());
-                }
-            }
-            PendingClose::Left(tab_id) => {
-                self.tabs = tabs_from_inclusive(std::mem::take(&mut self.tabs), &tab_id);
-                if self.active_index().is_none() {
-                    self.active_tab = self.tabs.first().map(|t| t.id.clone());
-                }
-            }
-        }
-        // 여러 탭을 한 번에 닫으면 포커스가 사라진 세션을 가리킬 수 있다.
-        // 비워 두면 `focus_active_pane`이 활성 탭의 첫 pane으로 되돌린다.
-        if self
-            .focused_pane
-            .as_ref()
-            .is_some_and(|s| self.tab_of_pane(s).is_none())
-        {
-            self.focused_pane = None;
-        }
-        self.sync_sessions(window, cx);
-        self.focus_active_pane(window, cx);
-        self.persist_layout(cx);
-        cx.notify();
-    }
-
-    /// 탭 제거 + active 폴백(= 마지막 탭). TS `closeTab`과 동일.
-    fn remove_tab_at(&mut self, index: usize) {
-        let removed = self.tabs.remove(index);
-        self.broadcast_tabs.remove(&removed.id);
-        if self.active_tab.as_ref() == Some(&removed.id) {
-            self.active_tab = self.tabs.last().map(|t| t.id.clone());
-            self.focused_pane = self
-                .active_index()
-                .and_then(|i| leaves(&self.tabs[i].root).first().map(|l| l.session_id.clone()));
-        }
-    }
-
     // ---- 재연결 -----------------------------------------------------------
 
     /// pane 재연결: 새 세션 id로 갈아끼우고 옛 PTY/스크롤백을 버린다.
@@ -574,112 +405,6 @@ impl TerminalWorkspace {
         self.views.remove(session);
         self.search.remove(session);
         self.registry.update(cx, |reg, cx| reg.close(session, cx));
-    }
-
-    // ---- 이름 변경 --------------------------------------------------------
-
-    pub fn start_rename(&mut self, tab_id: TabId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(index) = self.tab_index(&tab_id) else {
-            return;
-        };
-        let title = tab_title(&self.tabs[index]).to_string();
-        let input = cx.new(|cx| TextInput::new(window, cx).with_text(title));
-        let editing = tab_id.clone();
-        let sub = cx.subscribe(&input, move |this: &mut Self, input, event, cx| {
-            use crate::ui::InputEvent;
-            match event {
-                InputEvent::Submitted => {
-                    let text = input.read(cx).text().to_string();
-                    this.commit_rename(&editing, &text, cx);
-                }
-                InputEvent::Blurred => {
-                    this.rename = None;
-                    cx.notify();
-                }
-                InputEvent::Changed => {}
-            }
-        });
-        self._subscriptions.push(sub);
-        window.focus(&input.read(cx).focus_handle(cx));
-        self.rename = Some((tab_id, input));
-        cx.notify();
-    }
-
-    fn commit_rename(&mut self, tab_id: &TabId, text: &str, cx: &mut Context<Self>) {
-        let trimmed = text.trim();
-        if let Some(index) = self.tab_index(tab_id) {
-            // 빈 이름은 "이름 없음"으로 되돌린다 — 그러면 첫 pane 라벨을 따른다.
-            self.tabs[index].name = (!trimmed.is_empty()).then(|| trimmed.to_string());
-        }
-        self.rename = None;
-        self.persist_layout(cx);
-        cx.notify();
-    }
-
-    /// pane 라벨 변경 (트리 내 leaf).
-    pub fn rename_pane(&mut self, session: &SessionId, label: &str, cx: &mut Context<Self>) {
-        let Some(tab_id) = self.tab_of_pane(session) else {
-            return;
-        };
-        let Some(index) = self.tab_index(&tab_id) else {
-            return;
-        };
-        let root = std::mem::replace(
-            &mut self.tabs[index].root,
-            PaneNode::Leaf(TerminalLeaf::new(SessionId::default(), None, String::new())),
-        );
-        self.tabs[index].root = rename_leaf(root, session, label);
-        self.persist_layout(cx);
-        cx.notify();
-    }
-
-    /// pane 헤더 더블클릭 — 인라인 라벨 편집. 탭 이름 편집과 같은 수명 규칙을
-    /// 쓴다(Submit이면 반영, Blur면 취소).
-    pub fn start_pane_rename(
-        &mut self,
-        session: SessionId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(label) = self
-            .tabs
-            .iter()
-            .flat_map(|tab| leaves(&tab.root))
-            .find(|leaf| leaf.session_id == session)
-            .map(|leaf| leaf.label.clone())
-        else {
-            return;
-        };
-        let input = cx.new(|cx| TextInput::new(window, cx).with_text(label));
-        let editing = session.clone();
-        let sub = cx.subscribe(&input, move |this: &mut Self, input, event, cx| {
-            use crate::ui::InputEvent;
-            match event {
-                InputEvent::Submitted => {
-                    let text = input.read(cx).text().to_string();
-                    this.commit_pane_rename(&editing, &text, cx);
-                }
-                InputEvent::Blurred => {
-                    this.pane_rename = None;
-                    cx.notify();
-                }
-                InputEvent::Changed => {}
-            }
-        });
-        self._subscriptions.push(sub);
-        window.focus(&input.read(cx).focus_handle(cx));
-        self.pane_rename = Some((session, input));
-        cx.notify();
-    }
-
-    fn commit_pane_rename(&mut self, session: &SessionId, text: &str, cx: &mut Context<Self>) {
-        let trimmed = text.trim();
-        // 빈 라벨은 탭 제목(`tab.name ?? 첫 leaf.label`)까지 비워버리므로 무시한다.
-        if !trimmed.is_empty() {
-            self.rename_pane(session, trimmed, cx);
-        }
-        self.pane_rename = None;
-        cx.notify();
     }
 
     // ---- 포커스 -----------------------------------------------------------
