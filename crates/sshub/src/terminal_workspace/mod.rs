@@ -205,11 +205,10 @@ impl TerminalWorkspace {
         if workspace.tabs.is_empty() {
             workspace.push_local_tab(None);
         }
-        // 시작 시 죽은 세션의 파일을 정리한다 (§7).
-        let live = workspace.all_session_ids();
-        workspace
-            .registry
-            .update(cx, |reg, _| reg.prune_scrollback(&live));
+        // 여기서 스크롤백/cwd를 prune하지 않는다. **이 창의 세션 id만** 알기
+        // 때문이다 — 창이 둘이면 먼저 만들어진 창이 다른 창의 스크롤백·cwd
+        // 파일을 지워 버려서, 나중에 복원되는 창이 히스토리와 pwd를 잃었다.
+        // 정리는 창을 전부 연 뒤 `main`이 window_manager의 전체 id로 한 번 한다.
         workspace.sync_sessions(window, cx);
         workspace.focus_active_pane(window, cx);
         workspace
@@ -255,13 +254,6 @@ impl TerminalWorkspace {
             .iter()
             .find(|t| leaves(&t.root).iter().any(|l| l.session_id == *session))
             .map(|t| t.id.clone())
-    }
-
-    fn all_session_ids(&self) -> Vec<String> {
-        self.tabs
-            .iter()
-            .flat_map(|t| leaves(&t.root).into_iter().map(|l| l.session_id.0.clone()))
-            .collect()
     }
 
     // ---- 탭/pane 생성 ------------------------------------------------------
