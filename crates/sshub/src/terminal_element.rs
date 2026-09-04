@@ -293,9 +293,20 @@ pub enum CursorKind {
     Hollow,
 }
 
+/// 커서가 덮어야 할 폭. 와이드 문자(CJK)는 셀 두 칸을 차지하므로 커서도 두 칸이다.
+pub fn cursor_width(bounds: &TerminalBounds, wide: bool) -> Pixels {
+    if wide {
+        bounds.cell_width * 2.0
+    } else {
+        bounds.cell_width
+    }
+}
+
 /// gpui에 커서 프리미티브가 없어 직접 그린다 (DESIGN-terminal.md §4).
 pub struct CursorLayout {
     origin: Point<Pixels>,
+    /// 커서가 덮는 폭. 와이드 문자(CJK) 위에서는 셀 두 칸이다 — 한 칸만 칠하면
+    /// 글자의 왼쪽 절반만 반전되어 보인다.
     cell_width: Pixels,
     line_height: Pixels,
     color: Hsla,
@@ -856,7 +867,7 @@ fn build_cursor(
 
     Some(CursorLayout {
         origin,
-        cell_width: tb.cell_width,
+        cell_width: cursor_width(&tb, content.cursor_wide),
         line_height: tb.line_height,
         color,
         kind,
@@ -1004,6 +1015,14 @@ mod tests {
         cell.c = c;
         cell.flags = flags;
         IndexedCell { point: AlacPoint::new(Line(0), Column(col)), cell }
+    }
+
+    /// 한글 위에서 커서가 왼쪽 절반만 덮던 회귀.
+    #[test]
+    fn cursor_covers_both_cells_of_a_wide_char() {
+        let tb = TerminalBounds::new(px(20.0), px(9.0), Size { width: px(180.0), height: px(60.0) });
+        assert_eq!(cursor_width(&tb, false), px(9.0));
+        assert_eq!(cursor_width(&tb, true), px(18.0));
     }
 
     /// `가나다 abc 漢字` — 각 배치 원점이 정확히 `col`에서 시작해야 한다.

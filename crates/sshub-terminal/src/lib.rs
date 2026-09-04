@@ -177,6 +177,8 @@ pub struct TerminalContent {
     pub selection_text: Option<String>,
     pub cursor: RenderableCursor,
     pub cursor_char: char,
+    /// 커서가 얹힌 글자가 와이드(CJK)인가 — 커서는 셀 2칸을 덮어야 한다.
+    pub cursor_wide: bool,
     pub terminal_bounds: TerminalBounds,
     pub last_hovered_link: Option<HoveredLink>,
 }
@@ -194,6 +196,7 @@ impl Default for TerminalContent {
                 point: AlacPoint::new(Line(0), Column(0)),
             },
             cursor_char: ' ',
+            cursor_wide: false,
             terminal_bounds: TerminalBounds::default(),
             last_hovered_link: None,
         }
@@ -463,7 +466,7 @@ impl Terminal {
         }
 
         // 커서 자리의 글자 — 블록 커서 위에 다시 그려야 한다.
-        let cursor_char = term.grid()[cursor.point].c;
+        let (cursor, cursor_char, cursor_wide) = cursor_cell(&term, cursor);
         let selection_text = if selection.is_some() { term.selection_to_string() } else { None };
         drop(term);
 
@@ -475,6 +478,7 @@ impl Terminal {
             selection_text,
             cursor,
             cursor_char,
+            cursor_wide,
             terminal_bounds: self.bounds,
             last_hovered_link: self.hovered_link.clone(),
         };
@@ -889,6 +893,24 @@ impl Drop for Terminal {
     }
 }
 
+/// 커서가 실제로 얹힌 셀 → (정규화된 커서, 그 글자, 와이드 여부).
+///
+/// 와이드 문자(CJK)는 셀 두 칸을 쓴다 — 앞 칸에 글자와 `WIDE_CHAR`, 뒤 칸에
+/// 빈 `WIDE_CHAR_SPACER`가 들어간다. 커서가 뒤 칸을 가리키면(셸이 절대 열
+/// 이동으로 커서를 그리 옮길 수 있다) 앞 칸으로 당긴다. 이 점 하나를 커서
+/// 사각형·IME 오버레이·IME 후보창 위치가 모두 쓰므로 여기서 한 번만 맞춘다.
+fn cursor_cell<T: EventListener>(
+    term: &Term<T>,
+    mut cursor: RenderableCursor,
+) -> (RenderableCursor, char, bool) {
+    let grid = term.grid();
+    if grid[cursor.point].flags.contains(Flags::WIDE_CHAR_SPACER) && cursor.point.column.0 > 0 {
+        cursor.point.column = Column(cursor.point.column.0 - 1);
+    }
+    let cell = &grid[cursor.point];
+    (cursor, cell.c, cell.flags.contains(Flags::WIDE_CHAR))
+}
+
 /// 한 행의 텍스트와 "char 인덱스 → Column" 매핑.
 /// WIDE_CHAR_SPACER는 건너뛰므로 char 하나가 셀 하나에 대응한다.
 fn line_text<T: EventListener>(term: &Term<T>, line: Line) -> (String, Vec<Column>) {
@@ -956,6 +978,42 @@ mod tests {
         let spec = SpawnSpec::local_shell(None);
         assert_eq!(spec.args, vec!["-l".to_string()]);
         assert!(!spec.program.is_empty());
+    }
+
+    /// 한글 위의 커서가 반 칸만 덮던 회귀 — 커서 폭은 셀 수로 결정된다.
+    #[test]
+    fn cursor_on_a_wide_char_covers_two_cells() {
+        use backend::{AnsiProcessor, TermConfig, TermSize, VoidListener};
+        let mut term = Term::new(TermConfig::default(), &TermSize::new(20, 3), VoidListener);
+        let mut parser = AnsiProcessor::new();
+        parser.advance(&mut term, "가".as_bytes());
+
+        // 글자 칸(0열)에 커서
+        parser.advance(&mut term, b"\x1b[1G");
+        let (cursor, ch, wide) = cursor_cell(&term, term.renderable_content().cursor);
+        assert_eq!(cursor.point.column, Column(0));
+        assert_eq!(ch, '가');
+        assert!(wide);
+
+        // spacer 칸(1열)에 커서 — 글자 칸으로 당겨진다
+        parser.advance(&mut term, b"\x1b[2G");
+        let (cursor, ch, wide) = cursor_cell(&term, term.renderable_content().cursor);
+        assert_eq!(cursor.point.column, Column(0));
+        assert_eq!(ch, '가');
+        assert!(wide);
+    }
+
+    #[test]
+    fn cursor_on_a_narrow_char_stays_one_cell() {
+        use backend::{AnsiProcessor, TermConfig, TermSize, VoidListener};
+        let mut term = Term::new(TermConfig::default(), &TermSize::new(20, 3), VoidListener);
+        let mut parser = AnsiProcessor::new();
+        parser.advance(&mut term, b"AB\x1b[2G");
+
+        let (cursor, ch, wide) = cursor_cell(&term, term.renderable_content().cursor);
+        assert_eq!(cursor.point.column, Column(1));
+        assert_eq!(ch, 'B');
+        assert!(!wide);
     }
 
     #[test]
