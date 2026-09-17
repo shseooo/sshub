@@ -9,8 +9,8 @@
 
 use gpui::{AppContext as _, Context, Window};
 use sshub_splits::{
-    leaves, remove_leaf, tabs_except, tabs_from_inclusive, tabs_up_to_inclusive, PaneNode,
-    SessionId, TabId, TerminalLeaf,
+    close_pane, leaves, tabs_except, tabs_from_inclusive, tabs_up_to_inclusive, PaneNode,
+    SessionId, TabId, TerminalLeaf, TerminalTab,
 };
 
 use super::{is_risky_close, TerminalWorkspace};
@@ -122,13 +122,17 @@ impl TerminalWorkspace {
                 let Some(index) = self.tab_index(&tab_id) else {
                     return;
                 };
-                let root = std::mem::replace(
-                    &mut self.tabs[index].root,
-                    PaneNode::Leaf(TerminalLeaf::new(SessionId::default(), None, String::new())),
-                );
-                match remove_leaf(root, &session) {
-                    Some(root) => {
-                        self.tabs[index].root = root;
+                let placeholder = TerminalTab {
+                    id: TabId::default(),
+                    root: PaneNode::Leaf(TerminalLeaf::new(SessionId::default(), None, String::new())),
+                    name: None,
+                };
+                let tab = std::mem::replace(&mut self.tabs[index], placeholder);
+                // `close_pane`은 pane 하나만 남으면 커스텀 탭 이름을 풀어
+                // 제목이 마지막 pane의 라벨을 따르게 한다.
+                match close_pane(tab, &session) {
+                    Some(tab) => {
+                        self.tabs[index] = tab;
                         // 남은 pane 중 첫 번째로 포커스를 옮긴다.
                         self.focused_pane = leaves(&self.tabs[index].root)
                             .first()

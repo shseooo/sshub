@@ -20,7 +20,8 @@ impl TerminalWorkspace {
             return;
         };
         let title = tab_title(&self.tabs[index]).to_string();
-        let input = cx.new(|cx| TextInput::new(window, cx).with_text(title));
+        // 더블클릭 직후 기존 이름이 통째로 선택돼 있어야 새 이름을 바로 칠 수 있다.
+        let input = cx.new(|cx| TextInput::new(window, cx).with_text(title).with_all_selected());
         let editing = tab_id.clone();
         let sub = cx.subscribe(&input, move |this: &mut Self, input, event, cx| {
             use crate::ui::InputEvent;
@@ -87,7 +88,7 @@ impl TerminalWorkspace {
         else {
             return;
         };
-        let input = cx.new(|cx| TextInput::new(window, cx).with_text(label));
+        let input = cx.new(|cx| TextInput::new(window, cx).with_text(label).with_all_selected());
         let editing = session.clone();
         let sub = cx.subscribe(&input, move |this: &mut Self, input, event, cx| {
             use crate::ui::InputEvent;

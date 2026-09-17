@@ -70,6 +70,22 @@ pub fn close_tab(
     (next, next_active)
 }
 
+/// 탭 안의 pane 하나를 닫는다. 마지막 pane이었으면 `None`(탭 자체가 닫힘).
+///
+/// 남은 pane이 **하나**가 되면 커스텀 탭 이름을 해제한다 — 분할을 하나씩
+/// 정리해 pane 하나만 남았을 때 탭은 그 pane을 대표해야 하므로 제목이
+/// 마지막 pane의 라벨(`tab_title`의 기본 규칙)을 따르게 한다. 둘 이상 남았을
+/// 때는 사용자가 붙인 이름을 그대로 둔다.
+pub fn close_pane(tab: TerminalTab, session_id: &SessionId) -> Option<TerminalTab> {
+    let TerminalTab { id, root, name } = tab;
+    let before = leaves(&root).len();
+    let root = remove_leaf(root, session_id)?;
+    // 미존재 세션이면 pane 수가 그대로다 — 그때 이름을 잃으면 안 된다.
+    let collapsed_to_one = before > 1 && leaves(&root).len() == 1;
+    let name = if collapsed_to_one { None } else { name };
+    Some(TerminalTab { id, root, name })
+}
+
 /// 탭 전체를 다른 탭으로 병합: src 탭을 제거하고 그 pane 트리 전체를 dst 탭의
 /// `dst_pane_id` 옆에 `side` 방향으로 graft. src==dst 또는 src 미존재 → 그대로.
 /// active 전환(→ dst)은 호출자 책임. TS `mergeTab`.

@@ -185,6 +185,14 @@ impl TextInput {
         self
     }
 
+    /// 내용 전체를 선택한 채로 시작한다 — 인라인 이름 변경처럼 "기존 이름을
+    /// 바로 덮어쓰기"가 기본 동작인 입력에 쓴다. 첫 타이핑이 선택을 대체한다.
+    pub fn with_all_selected(mut self) -> Self {
+        self.selected_range = 0..self.content.len();
+        self.selection_reversed = false;
+        self
+    }
+
     pub fn with_masked(mut self, masked: bool) -> Self {
         self.masked = masked;
         self

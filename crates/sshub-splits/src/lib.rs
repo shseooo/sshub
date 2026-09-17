@@ -588,6 +588,54 @@ mod tests {
         assert_eq!(insert_at_index(vec!["a", "b"], "x", Some(0)), ["x", "a", "b"]);
     }
 
+    // -------- close_pane (마지막 pane이 탭 이름을 잇는다) --------
+
+    fn named_tab(name: &str, root: PaneNode) -> TerminalTab {
+        TerminalTab { id: tid("t"), root, name: Some(name.into()) }
+    }
+
+    #[test]
+    fn close_pane_drops_the_custom_name_when_one_pane_remains() {
+        let tab = named_tab(
+            "작업",
+            split("s", SplitDirection::Row, vec![0.5, 0.5], vec![lnode("a"), lnode("b")]),
+        );
+        let tab = close_pane(tab, &sid("a")).expect("tab survives");
+        assert_eq!(ids(&tab.root), ["b"]);
+        assert_eq!(tab.name, None);
+        assert_eq!(tab_title(&tab), "b");
+    }
+
+    #[test]
+    fn close_pane_keeps_the_custom_name_while_several_panes_remain() {
+        let tab = named_tab(
+            "작업",
+            split(
+                "s",
+                SplitDirection::Row,
+                vec![0.3, 0.3, 0.4],
+                vec![lnode("a"), lnode("b"), lnode("c")],
+            ),
+        );
+        let tab = close_pane(tab, &sid("a")).expect("tab survives");
+        assert_eq!(ids(&tab.root), ["b", "c"]);
+        assert_eq!(tab.name.as_deref(), Some("작업"));
+    }
+
+    #[test]
+    fn close_pane_of_the_last_pane_closes_the_tab() {
+        assert!(close_pane(named_tab("작업", lnode("a")), &sid("a")).is_none());
+    }
+
+    #[test]
+    fn close_pane_with_an_unknown_session_leaves_the_tab_alone() {
+        let tab = named_tab("작업", lnode("a"));
+        let tab = close_pane(tab, &sid("zzz")).expect("tab survives");
+        assert_eq!(ids(&tab.root), ["a"]);
+        // pane 수가 변하지 않았는데 이름을 잃으면 안 된다.
+        assert_eq!(tab.name.as_deref(), Some("작업"));
+    }
+
     // -------- close_tab (active 폴백) --------
 
     #[test]
