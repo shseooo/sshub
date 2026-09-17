@@ -4,6 +4,7 @@
 //! API는 전부 동기 — 비동기 경계(ssh-keygen·lsof·scrypt)는 호출자(GPUI
 //! BackgroundExecutor)가 담당한다.
 
+pub mod agent_sessions;
 pub mod backup;
 pub mod crypto;
 pub mod error;

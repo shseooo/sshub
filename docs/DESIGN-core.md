@@ -26,6 +26,7 @@ crates/sshub-core/src/
   ops/{mod,server_ops,key_ops,bundle_ops}.rs
   ssh_config/{mod,parse,render,backups,file}.rs
   scrollback.rs terminal_cwd.rs window_state.rs settings.rs
+  agent_sessions/{mod,jsonl,tests}.rs agent_sessions/agents/{mod,claude_code,pi}.rs
 tests/
   fixtures/{node_sshub.json,node_envelope.enc,node_plain_export.json,gen_fixtures.mjs}
   compat_store.rs compat_crypto.rs keygen_integration.rs

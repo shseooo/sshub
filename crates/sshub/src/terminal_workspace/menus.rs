@@ -7,7 +7,8 @@
 //! 동작을 부르기만 한다.
 
 use gpui::{App, AppContext as _, Context, DismissEvent, Pixels, Point, SharedString, Window};
-use sshub_splits::{SessionId, SplitDirection, TabId};
+use sshub_core::agent_sessions::{self, AgentGroup};
+use sshub_splits::{leaves, SessionId, SplitDirection, TabId};
 
 use super::TerminalWorkspace;
 use crate::i18n::{tr, TrKey};
@@ -40,7 +41,12 @@ impl TerminalWorkspace {
         let dismiss = cx.subscribe_in(
             &menu,
             window,
-            |this: &mut Self, _menu, _: &DismissEvent, window, cx| {
+            |this: &mut Self, menu, _: &DismissEvent, window, cx| {
+                // 내가 연 메뉴만 지운다 — 항목 동작이 이미 다음 메뉴를 열어
+                // 두었을 수 있다(에이전트 세션 목록처럼 비동기로 뜨는 2단 메뉴).
+                if this.menu.as_ref() != Some(menu) {
+                    return;
+                }
                 this.menu = None;
                 // 항목 동작이 확인 모달을 띄웠다면 포커스를 되찾아 오면 안 된다
                 // — 방금 연 모달에서 포커스를 빼앗는 꼴이 된다.
@@ -122,6 +128,26 @@ impl TerminalWorkspace {
                     }
                 })
                 .hint(paste_hint)
+            },
+            ContextMenuItem::separator(),
+            {
+                let this = this.clone();
+                let session = session.clone();
+                // 서버 세션(원격 셸)에는 로컬 세션 파일이 없다 — 항목은 남기고
+                // 비활성으로 둔다(위치 고정).
+                let local = self
+                    .tabs
+                    .iter()
+                    .flat_map(|t| leaves(&t.root))
+                    .find(|l| l.session_id == session)
+                    .is_some_and(|l| l.server_id.is_none());
+                ContextMenuItem::entry(tr(lang, TrKey::TermAgentSessions), move |window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.open_agent_sessions_menu(session.clone(), at, window, cx)
+                    })
+                    .ok();
+                })
+                .disabled(!local)
             },
             ContextMenuItem::separator(),
             {
@@ -209,5 +235,117 @@ impl TerminalWorkspace {
             }),
         ];
         self.open_menu(at, items, window, cx);
+    }
+}
+
+/// 에이전트별로 메뉴에 보여 줄 최대 세션 수.
+const AGENT_SESSIONS_PER_AGENT: usize = 8;
+
+impl TerminalWorkspace {
+    /// pane 메뉴의 "코딩 에이전트 세션…" — 그 pane의 **현재 디렉터리**에서 열었던
+    /// 세션을 백그라운드에서 읽어 2단 메뉴로 띄운다. 세션 파일은 수 MB라 메인
+    /// 스레드에서 읽지 않는다.
+    pub fn open_agent_sessions_menu(
+        &mut self,
+        session: SessionId,
+        at: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(cwd) = self
+            .registry
+            .update(cx, |registry, cx| registry.live_local_cwd(&session, cx))
+        else {
+            return;
+        };
+        let Some(env) = agent_sessions::Env::from_process() else {
+            return;
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let groups = cx
+                .background_spawn(async move {
+                    agent_sessions::list_all(&env, &cwd, AGENT_SESSIONS_PER_AGENT)
+                })
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                this.show_agent_sessions_menu(session, at, groups, window, cx)
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn show_agent_sessions_menu(
+        &mut self,
+        session: SessionId,
+        at: Point<Pixels>,
+        groups: Vec<AgentGroup>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let lang = self.lang;
+        let this = cx.entity().downgrade();
+        let mut items: Vec<ContextMenuItem> = Vec::new();
+
+        if groups.is_empty() {
+            items.push(
+                ContextMenuItem::entry(tr(lang, TrKey::TermAgentNoneInstalled), |_, _| {})
+                    .disabled(true),
+            );
+        }
+        for (i, group) in groups.into_iter().enumerate() {
+            if i > 0 {
+                items.push(ContextMenuItem::separator());
+            }
+            // 에이전트 이름은 헤더 — 고를 수 없는 항목으로 둔다.
+            items.push(ContextMenuItem::entry(group.display_name, |_, _| {}).disabled(true));
+            if group.sessions.is_empty() {
+                items.push(
+                    ContextMenuItem::entry(tr(lang, TrKey::TermAgentNoSessions), |_, _| {})
+                        .disabled(true),
+                );
+            }
+            for s in group.sessions {
+                // 명령줄은 코어가 만든다 — id 새니타이즈도 그쪽에서 한다.
+                let Some(command) = agent_sessions::resume_command(s.agent, &s.id) else {
+                    continue;
+                };
+                let (this, session) = (this.clone(), session.clone());
+                items.push(
+                    ContextMenuItem::entry(s.title, move |_window, cx| {
+                        Self::run_in_pane(&this, &session, &command, cx);
+                    })
+                    .hint(Some(SharedString::from(agent_sessions::format_updated(s.updated_at)))),
+                );
+            }
+            let (this, session) = (this.clone(), session.clone());
+            let command = group.new_session_command;
+            items.push(ContextMenuItem::entry(
+                tr(lang, TrKey::TermAgentNewSession),
+                move |_window, cx| {
+                    Self::run_in_pane(&this, &session, &command, cx);
+                },
+            ));
+        }
+        self.open_menu(at, items, window, cx);
+    }
+
+    /// 명령줄 + Enter를 pane의 PTY로 보낸다. 터미널 핸들만 먼저 꺼내고
+    /// 워크스페이스 대여를 끝낸 뒤 쓴다(메뉴 항목의 다른 동작과 같은 규칙).
+    fn run_in_pane(
+        this: &gpui::WeakEntity<Self>,
+        session: &SessionId,
+        command: &str,
+        cx: &mut App,
+    ) {
+        let terminal = this
+            .update(cx, |this, cx| this.registry.read(cx).get(session))
+            .ok()
+            .flatten();
+        if let Some(terminal) = terminal {
+            let mut bytes = command.as_bytes().to_vec();
+            bytes.push(b'\r');
+            terminal.update(cx, |terminal, _| terminal.input(bytes));
+        }
     }
 }

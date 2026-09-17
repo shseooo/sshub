@@ -1008,5 +1008,25 @@
     "en": "Focus pane down",
     "ko": "아래쪽 패널로 이동",
     "ja": "下のパネルへ"
+  },
+  "term.agentSessions": {
+    "en": "Coding agent sessions…",
+    "ko": "코딩 에이전트 세션…",
+    "ja": "コーディングエージェントのセッション…"
+  },
+  "term.agentNewSession": {
+    "en": "New session",
+    "ko": "새 세션 시작",
+    "ja": "新しいセッション"
+  },
+  "term.agentNoSessions": {
+    "en": "No sessions in this folder",
+    "ko": "이 폴더의 세션 없음",
+    "ja": "このフォルダにセッションはありません"
+  },
+  "term.agentNoneInstalled": {
+    "en": "No coding agents found",
+    "ko": "설치된 코딩 에이전트 없음",
+    "ja": "コーディングエージェントが見つかりません"
   }
 }

@@ -29,7 +29,9 @@ bun scripts/gen_i18n.mjs     # 문자열 변경 후 i18n 재생성
 
 - `crates/sshub-core/` — 순수 로직·영속성. **비 UI 전부.** `store`(config⨝사이드카),
   `ssh_config/{document,parse,file}`, `crypto`, `keys_io`, `key_scan`, `sidecar`,
-  `ssh_args`, `settings`, `scrollback`, `terminal_cwd`, `window_state`.
+  `ssh_args`, `settings`, `scrollback`, `terminal_cwd`, `window_state`,
+  `agent_sessions`(코딩 에이전트 세션 탐색·재개 명령 — 에이전트 어댑터는
+  `agent_sessions/agents/` 아래 파일 하나씩).
 - `crates/sshub-splits/` — 분할 트리·탭 순수 연산 (gpui 의존 없음).
 - `crates/sshub-terminal/` — alacritty 래핑 터미널 모델. **모든 alacritty import는
   `backend.rs` 한 곳**(seam)에만 둔다.

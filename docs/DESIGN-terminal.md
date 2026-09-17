@@ -412,3 +412,34 @@ CoreGraphics(`CGDisplayBounds`)에서 직접 가져와 전역 좌표로 올린�
 - 다중 창(§8)과 `cmd-Q` 종료 순서 연결: `TerminalWorkspace::shutdown` /
   `SessionRegistry::shutdown_all`(cwd 스냅샷 → flush → kill)은 준비됐지만
   앱 라이프사이클에 아직 연결되지 않았다.
+
+## 13. 코딩 에이전트 세션 재개 (2026-09-17)
+
+pane 우클릭 → "코딩 에이전트 세션…" → 그 pane의 **라이브 cwd**에서 열었던
+Claude Code·pi 세션 목록(최근 순, 에이전트당 8개)을 2단 메뉴로 보여 주고,
+고르면 재개 명령(`claude --resume <id>` / `pi --session <id>`)에 Enter를 붙여
+PTY로 보낸다. "새 세션 시작"은 바이너리 이름만 보낸다.
+
+- **코어** `sshub_core::agent_sessions` — `SessionAgent` 트레이트 하나가 에이전트
+  하나. 저장 위치·cwd 인코딩·파일 파싱·재개 플래그를 전부 어댑터가 안다.
+  새 에이전트 = `agents/<name>.rs` 추가 + `registry()`에 등록.
+  - Claude Code: `~/.claude/projects/<cwd에서 '/'와 '_'를 '-'로>/<uuid>.jsonl`.
+    인코딩이 비가역이라(`sub_projects`≡`sub-projects`) 파일 안의 `cwd`로 재확인.
+    제목은 마지막 `ai-title`, 없으면 첫 사용자 프롬프트(`isMeta`·`<…>` 제외).
+    `CLAUDE_CONFIG_DIR` 존중.
+  - pi: `~/.pi/agent/sessions/--<cwd에서 '/'만 '-'로>--/<시각>_<uuid>.jsonl`.
+    첫 줄 `{"type":"session","id","cwd"}` 헤더. 제목은 `session_info.name`,
+    없으면 첫 사용자 메시지. `PI_CODING_AGENT_SESSION_DIR`/`PI_CODING_AGENT_DIR` 존중.
+  - 형식은 전부 비공식 → 파싱 실패 파일은 건너뛴다. 큰 파일(수 MB)은 필요한
+    부분 문자열이 든 줄만 JSON 파싱한다(`jsonl::scan`) — 13MB에 40ms 수준.
+  - 세션 id는 `is_safe_id`(영숫자·`-`·`_`, ≤64자)를 통과한 것만 셸에 넣는다.
+  - 설치 여부는 설정 디렉터리 존재로 본다 — Finder에서 띄운 앱의 PATH는 셸과
+    달라 `which`를 믿을 수 없다.
+  - 홈·환경 변수는 `Env`로 주입 — 테스트는 tempfile 안의 가짜 홈만 읽는다.
+- **UI** `terminal_workspace/menus.rs` — 목록 읽기는 `spawn_in` +
+  `background_spawn`으로 메인 스레드 밖. 첫 메뉴의 dismiss가 두 번째 메뉴를
+  지우지 않도록 `open_menu`의 dismiss 구독은 **자기 메뉴일 때만** `menu=None`.
+  서버 pane(원격)에서는 항목을 비활성으로 둔다(위치 고정 규칙).
+- 한계: 이미 실행 중인 세션에 붙는 것은 파일만으로 알 수 없다. 명령은 pane의
+  포그라운드 프로그램이 셸일 때를 가정한다(vim 등이 떠 있으면 그리로 들어간다).
+
