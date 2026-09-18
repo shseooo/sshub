@@ -28,20 +28,36 @@ pub(super) enum PendingClose {
 }
 
 impl TerminalWorkspace {
-    /// 포커스된 pane 닫기 — 위험하면(여러 pane 또는 서버 세션) 확인 모달.
+    /// ⌘W / pane 메뉴 "패널 닫기". 대상은 **활성 탭**이다 — 탭바 X가 보이는 탭을
+    /// 닫는 것과 같은 기준. 예전엔 `focused_pane`이 가리키는 탭을 닫았는데,
+    /// 포커스 기록이 활성 탭과 어긋나면 보이지 않는 탭이 닫히거나(사용자 보고:
+    /// X와 동작이 다르다) 아무 일도 일어나지 않았다.
+    ///
+    /// - 분할이 없으면 X 버튼과 **같은 경로**(`close_tab`)를 탄다.
+    /// - 분할돼 있으면 그 탭 안의 포커스된 pane 하나만 닫는다(위험 → 확인 모달).
     pub fn close_focused_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(session) = self.focused_pane.clone() else {
+        let Some(index) = self.active_index() else {
             return;
         };
-        let risky = self
-            .tab_of_pane(&session)
-            .and_then(|tab| self.tab_index(&tab))
-            .is_some_and(|i| is_risky_close(&self.tabs[i].root));
-        if risky {
-            self.ask(PendingClose::Pane(session), TrKey::TermConfirmCloseTab, window, cx);
-        } else {
-            self.apply_close(PendingClose::Pane(session), window, cx);
+        let tab_id = self.tabs[index].id.clone();
+        let panes = leaves(&self.tabs[index].root);
+        if panes.len() <= 1 {
+            self.close_tab(tab_id, window, cx);
+            return;
         }
+        // 포커스가 활성 탭 밖을 가리키면 그 탭의 첫 pane으로 접는다 —
+        // `focus_some_pane`과 같은 규칙.
+        let session = self
+            .focused_pane
+            .clone()
+            .filter(|s| panes.iter().any(|l| l.session_id == *s))
+            .or_else(|| panes.first().map(|l| l.session_id.clone()));
+        let Some(session) = session else {
+            return;
+        };
+        // 여러 pane이므로 항상 위험한 닫기다 (`is_risky_close`).
+        debug_assert!(is_risky_close(&self.tabs[index].root));
+        self.ask(PendingClose::Pane(session), TrKey::TermConfirmCloseTab, window, cx);
     }
 
     pub fn close_tab(&mut self, tab_id: TabId, window: &mut Window, cx: &mut Context<Self>) {

@@ -135,6 +135,10 @@ detach_pane(leaves>1 필수, boundary 삽입), merge_tab(root 전체 graft), rec
 - **브로드캐스트** (기존 기능): Workspace.broadcast_tabs: HashSet<TabId>; 활성 시 키/IME 커밋/붙여넣기
   바이트를 해당 탭 전 leaf에 복제 (포커스 pane이 커서/IME 소유). 표시: 각 pane 어센트 2px 내부 보더 + 탭 배지.
 - 닫기 확인: risky = leaves>1 ∨ server_id 존재 → 모달; close-others(탭>1), close-right(우측 존재)도.
+- **⌘W의 대상은 활성 탭** (2026-09-18): 분할이 없으면 탭바 X와 같은 `close_tab`을
+  타고, 분할돼 있으면 그 탭 안의 포커스된 pane 하나만 닫는다. 예전엔
+  `focused_pane`의 탭을 닫아, 포커스 기록이 활성 탭과 어긋난 경우 X와 결과가
+  달랐다(보이지 않는 탭이 닫히거나 무반응). 회귀 테스트: `tests/close_shortcut.rs`.
 
 ## 7. 스크롤백 영속화 — 결정: grid→ANSI 직렬화 (raw ring 아님)
 
