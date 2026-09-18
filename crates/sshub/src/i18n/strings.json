@@ -1028,5 +1028,45 @@
     "en": "No coding agents found",
     "ko": "설치된 코딩 에이전트 없음",
     "ja": "コーディングエージェントが見つかりません"
+  },
+  "term.favoritePaths": {
+    "en": "Favorite paths…",
+    "ko": "즐겨찾기 경로…",
+    "ja": "お気に入りパス…"
+  },
+  "term.favoritePathsEmpty": {
+    "en": "No favorite paths — add them in Settings",
+    "ko": "즐겨찾기 경로 없음 — 설정에서 추가",
+    "ja": "お気に入りパスなし — 設定で追加"
+  },
+  "settings.favoritePathsDesc": {
+    "en": "Folders shown under “Favorite paths…” in the terminal right-click menu. Picking one sends cd to that pane. ~ is expanded by the shell, so the list also works in remote sessions.",
+    "ko": "터미널 우클릭 메뉴의 “즐겨찾기 경로…”에 뜨는 폴더들. 고르면 그 pane에 cd 명령을 보냅니다. ~는 셸이 확장하므로 원격 세션에서도 쓸 수 있습니다.",
+    "ja": "ターミナル右クリックメニューの「お気に入りパス…」に表示されるフォルダ。選ぶとそのペインに cd を送ります。~ はシェルが展開するのでリモートでも使えます。"
+  },
+  "settings.favoritePathPlaceholder": {
+    "en": "/path/to/folder or ~/folder",
+    "ko": "/경로/폴더 또는 ~/폴더",
+    "ja": "/パス/フォルダ または ~/フォルダ"
+  },
+  "settings.favoritePathAdd": {
+    "en": "Add",
+    "ko": "추가",
+    "ja": "追加"
+  },
+  "settings.favoritePathBrowse": {
+    "en": "Choose folder…",
+    "ko": "폴더 선택…",
+    "ja": "フォルダを選択…"
+  },
+  "settings.favoritePathBrowseTitle": {
+    "en": "Add favorite path",
+    "ko": "즐겨찾기 경로 추가",
+    "ja": "お気に入りパスを追加"
+  },
+  "settings.favoritePathsEmpty": {
+    "en": "No favorite paths yet.",
+    "ko": "아직 즐겨찾기 경로가 없습니다.",
+    "ja": "お気に入りパスはまだありません。"
   }
 }

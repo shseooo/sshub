@@ -8,6 +8,7 @@ pub mod agent_sessions;
 pub mod backup;
 pub mod crypto;
 pub mod error;
+pub mod favorite_paths;
 pub mod fsutil;
 pub mod key_files;
 pub mod key_migration;

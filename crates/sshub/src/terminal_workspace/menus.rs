@@ -8,6 +8,7 @@
 
 use gpui::{App, AppContext as _, Context, DismissEvent, Pixels, Point, SharedString, Window};
 use sshub_core::agent_sessions::{self, AgentGroup};
+use sshub_core::favorite_paths;
 use sshub_splits::{leaves, SessionId, SplitDirection, TabId};
 
 use super::TerminalWorkspace;
@@ -148,6 +149,18 @@ impl TerminalWorkspace {
                     .ok();
                 })
                 .disabled(!local)
+            },
+            {
+                let this = this.clone();
+                let session = session.clone();
+                // 원격 pane에서도 켜 둔다 — `~/…`처럼 양쪽에 있는 폴더를 즐겨찾기로
+                // 두는 쓰임이 있고, 없는 폴더면 셸이 알려 준다.
+                ContextMenuItem::entry(tr(lang, TrKey::TermFavoritePaths), move |window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.open_favorite_paths_menu(session.clone(), at, window, cx)
+                    })
+                    .ok();
+                })
             },
             ContextMenuItem::separator(),
             {
@@ -326,6 +339,39 @@ impl TerminalWorkspace {
                     Self::run_in_pane(&this, &session, &command, cx);
                 },
             ));
+        }
+        self.open_menu(at, items, window, cx);
+    }
+
+    /// pane 메뉴의 "즐겨찾기 경로…" — 설정에 저장된 폴더 목록을 2단 메뉴로 띄우고,
+    /// 고르면 `cd <경로>` + Enter를 그 pane으로 보낸다. 목록이 비면 설정으로
+    /// 안내하는 비활성 항목 하나만 보인다(메뉴가 통째로 안 뜨면 고장으로 보인다).
+    pub fn open_favorite_paths_menu(
+        &mut self,
+        session: SessionId,
+        at: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let lang = self.lang;
+        let this = cx.entity().downgrade();
+        let paths = self.state.read(cx).settings.favorite_paths.clone();
+        let mut items: Vec<ContextMenuItem> = Vec::new();
+        if paths.is_empty() {
+            items.push(
+                ContextMenuItem::entry(tr(lang, TrKey::TermFavoritePathsEmpty), |_, _| {})
+                    .disabled(true),
+            );
+        }
+        for path in paths {
+            // 인용은 코어가 한다 — 설정 파일 값도 셸에 그대로 넣지 않는다.
+            let Some(command) = favorite_paths::cd_command(&path) else {
+                continue;
+            };
+            let (this, session) = (this.clone(), session.clone());
+            items.push(ContextMenuItem::entry(path, move |_window, cx| {
+                Self::run_in_pane(&this, &session, &command, cx);
+            }));
         }
         self.open_menu(at, items, window, cx);
     }

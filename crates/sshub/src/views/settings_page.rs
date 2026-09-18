@@ -17,6 +17,7 @@ use gpui::{
     SharedString, Subscription, Window,
 };
 use sshub_core::backup::{self, ExportOptions};
+use sshub_core::favorite_paths;
 use sshub_core::settings::Settings;
 use sshub_core::CoreError;
 
@@ -156,6 +157,8 @@ pub struct SettingsView {
     language: Entity<Select>,
     term_font: Entity<Select>,
     accent_input: Entity<TextInput>,
+    /// 즐겨찾기 경로 입력란. Enter 또는 "추가"로 목록에 넣는다.
+    favorite_input: Entity<TextInput>,
     passphrase: Entity<TextInput>,
     /// 카드 하단 인라인 메시지 (원본과 동일하게 단일 슬롯).
     message: Option<(MessageSlot, String)>,
@@ -245,6 +248,10 @@ impl SettingsView {
                 .with_text(settings.appearance.accent.clone())
                 .with_placeholder(tr(lang, TrKey::SettingsCustom))
         });
+        let favorite_input = cx.new(|cx| {
+            TextInput::new(window, cx)
+                .with_placeholder(tr(lang, TrKey::SettingsFavoritePathPlaceholder))
+        });
         let passphrase = cx.new(|cx| {
             TextInput::new(window, cx)
                 .with_masked(true)
@@ -315,12 +322,22 @@ impl SettingsView {
             },
         ));
 
+        subscriptions.push(cx.subscribe(
+            &favorite_input,
+            |this: &mut Self, _input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Submitted) {
+                    this.add_favorite_from_input(cx);
+                }
+            },
+        ));
+
         Self {
             state,
             start_page,
             language,
             term_font,
             accent_input,
+            favorite_input,
             passphrase,
             message: None,
 
@@ -623,6 +640,56 @@ impl SettingsView {
     /// 같은 키는 기존 액션이 먼저 먹어 캡처에 도달하지 못한다.
     /// `intercept_keystrokes`는 그 매칭 앞단에서 가로채므로 어떤 조합이든 받는다.
     /// 이 카드에 표시할 메시지 (다른 카드의 것이면 None).
+    /// 입력란의 경로를 목록에 넣는다. 정규화·중복 판정은 코어(`favorite_paths`)가
+    /// 하고, 실제로 들어갔을 때만 입력란을 비운다 — 거부된 값은 남겨 두어
+    /// 사용자가 고칠 수 있게 한다.
+    fn add_favorite_from_input(&mut self, cx: &mut Context<Self>) {
+        let raw = self.favorite_input.read(cx).text().to_string();
+        if self.add_favorite(&raw, cx) {
+            self.favorite_input.update(cx, |input, cx| input.reset(cx));
+        }
+    }
+
+    fn add_favorite(&mut self, raw: &str, cx: &mut Context<Self>) -> bool {
+        let mut added = false;
+        self.state.update(cx, |state, cx| {
+            state.update_settings(
+                |s| added = favorite_paths::add_favorite(&mut s.favorite_paths, raw),
+                cx,
+            );
+        });
+        cx.notify();
+        added
+    }
+
+    fn remove_favorite(&mut self, path: &str, cx: &mut Context<Self>) {
+        self.state.update(cx, |state, cx| {
+            state.update_settings(|s| s.favorite_paths.retain(|p| p != path), cx);
+        });
+        cx.notify();
+    }
+
+    /// 폴더 선택 대화상자로 추가. 여러 개를 골라도 순서대로 전부 넣는다.
+    fn browse_favorite_folder(&mut self, cx: &mut Context<Self>) {
+        let lang = current_lang(cx);
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: true,
+            prompt: Some(tr(lang, TrKey::SettingsFavoritePathBrowseTitle).into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = receiver.await else { return };
+            this.update(cx, |view, cx| {
+                for path in paths {
+                    view.add_favorite(&path.display().to_string(), cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn message_for(&self, slot: MessageSlot) -> Option<String> {
         self.message
             .as_ref()
@@ -1044,6 +1111,84 @@ impl Render for SettingsView {
             )
             .children(shortcut_rows);
 
+        // --- Favorite Paths ---
+        let favorite_rows: Vec<_> = settings
+            .favorite_paths
+            .iter()
+            .enumerate()
+            .map(|(ix, path)| {
+                let path_for_remove = path.clone();
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_size(px(12.))
+                            .text_color(t.text)
+                            .child(path.clone()),
+                    )
+                    .child(
+                        div()
+                            .id(("favorite-remove", ix))
+                            .p(px(4.))
+                            .rounded(px(6.))
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(t.hover))
+                            .child(icon(Icon::Trash).color(t.text_disabled))
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.remove_favorite(&path_for_remove, cx);
+                            })),
+                    )
+            })
+            .collect();
+        let favorites_card = self
+            .card(cx)
+            .child(self.section("Favorite Paths", cx))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(t.text_muted)
+                    .child(tr(lang, TrKey::SettingsFavoritePathsDesc)),
+            )
+            .when(favorite_rows.is_empty(), |el| {
+                el.child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(t.text_disabled)
+                        .child(tr(lang, TrKey::SettingsFavoritePathsEmpty)),
+                )
+            })
+            .children(favorite_rows)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(div().flex_1().child(self.favorite_input.clone()))
+                    .child(
+                        Button::new("favorite-add", tr(lang, TrKey::SettingsFavoritePathAdd))
+                            .on_click(cx.listener(|this, _, _window, cx| {
+                                this.add_favorite_from_input(cx);
+                            })),
+                    )
+                    .child(
+                        Button::new(
+                            "favorite-browse",
+                            tr(lang, TrKey::SettingsFavoritePathBrowse),
+                        )
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.browse_favorite_folder(cx);
+                        })),
+                    ),
+            );
+
         // --- System Info (원본과 동일하게 하드코딩 라벨) ---
         let info_line = |label: &'static str, value: String| {
             div()
@@ -1081,6 +1226,7 @@ impl Render for SettingsView {
             .child(general_card)
             .child(appearance_card)
             .child(shortcuts_card)
+            .child(favorites_card)
             .child(info_card);
 
         let mut root = div()

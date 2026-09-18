@@ -33,6 +33,10 @@ pub struct Settings {
     pub appearance: Appearance,
     #[serde(default)]
     pub shortcuts: BTreeMap<String, String>,
+    /// pane 메뉴 "즐겨찾기 경로"에 뜨는 폴더들(입력 순서 유지). 로컬·원격 구분
+    /// 없이 `cd`로 보내므로 존재 검증은 하지 않는다 — `favorite_paths` 모듈 참조.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub favorite_paths: Vec<String>,
     /// `{ "tabs": [...], "activeIndex": n }` — 단일 창 레이아웃(구버전 호환).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_layout: Option<serde_json::Value>,
@@ -118,6 +122,7 @@ impl Default for Settings {
             sidebar_collapsed: false,
             appearance: Appearance::default(),
             shortcuts: default_shortcuts(),
+            favorite_paths: Vec::new(),
             terminal_layout: None,
             windows: Vec::new(),
         }
@@ -159,6 +164,12 @@ impl Settings {
         self.appearance.terminal.font_size = self.appearance.terminal.font_size.clamp(10.0, 24.0);
         for (action, combo) in default_shortcuts() {
             self.shortcuts.entry(action).or_insert(combo);
+        }
+        // 손으로 고친 파일의 빈 줄·중복·제어 문자를 걷어낸다. 여기서 안 걸러
+        // 두면 메뉴에 빈 항목이 뜨거나 셸에 개행이 들어간다.
+        let raw = std::mem::take(&mut self.favorite_paths);
+        for path in &raw {
+            crate::favorite_paths::add_favorite(&mut self.favorite_paths, path);
         }
     }
 }
@@ -209,6 +220,24 @@ mod tests {
         assert_eq!(s.language, None);
         assert_eq!(s.appearance.translucency, 40);
         assert_eq!(s.appearance.terminal.font_size, 24.0);
+    }
+
+    #[test]
+    fn favorite_paths_round_trip_and_are_scrubbed_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.json");
+        std::fs::write(
+            &path,
+            br#"{"version":1,"favoritePaths":[" /a ","","/a","~/b\nx","/c"]}"#,
+        )
+        .unwrap();
+        let s = Settings::load(&path);
+        assert_eq!(s.favorite_paths, vec!["/a", "/c"]);
+        s.save(&path);
+        assert_eq!(Settings::load(&path).favorite_paths, vec!["/a", "/c"]);
+        // 비어 있으면 파일에 키를 남기지 않는다(구버전 파일과 같은 모양).
+        let text = serde_json::to_string(&Settings::default()).unwrap();
+        assert!(!text.contains("favoritePaths"));
     }
 
     #[test]
